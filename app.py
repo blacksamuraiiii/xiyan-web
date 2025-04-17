@@ -11,6 +11,8 @@ import fitz # Added import
 from openai import OpenAI # Added import
 import time # Added import
 
+st.set_page_config(page_title="析言数据分析助手", layout="wide")
+
 # 加载环境变量
 load_dotenv()
 
@@ -109,12 +111,13 @@ def insert_dataframe_to_db(df, table_name, conn):
 
             # 插入数据 (使用COPY FROM提高效率)
             buffer = io.StringIO()
-            # 使用制表符分隔，设置QUOTE和ESCAPE以处理特殊字符
-            df.to_csv(buffer, index=False, header=False, sep='\t', quoting=3, escapechar='\\')
+            # 使用标准的CSV格式（逗号分隔，双引号引用，双引号转义），最小引用
+            # quoting=1 is csv.QUOTE_MINIMAL
+            df.to_csv(buffer, index=False, header=False, sep=',', quoting=1, quotechar='"', doublequote=True) # quoting=1 is csv.QUOTE_MINIMAL
             buffer.seek(0)
 
-            # COPY 语句，确保DELIMITER, QUOTE, ESCAPE正确设置
-            copy_sql = f"""COPY "{table_name}" FROM stdin WITH (FORMAT CSV, DELIMITER E'\t', QUOTE E'\b', ESCAPE E'\\')"""
+            # COPY 语句，使用标准的CSV格式 (移除显式 ESCAPE，依赖默认的双引号转义)
+            copy_sql = f"""COPY "{table_name}" FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"')"""
             cur.copy_expert(sql=copy_sql, file=buffer)
             conn.commit()
         return True
@@ -131,23 +134,35 @@ def process_tabular_file(uploaded_file, conn):
         table_name = ''.join(filter(str.isalnum, file_name)) # 清理文件名作为表名
 
         if uploaded_file.name.endswith('.csv'):
-            # 尝试指定escapechar='\\'来处理可能的转义问题
-            try:
-                df = pd.read_csv(uploaded_file, escapechar='\\')
-            except pd.errors.ParserError:
-                st.warning(f"解析CSV文件 '{uploaded_file.name}' 时遇到问题，尝试不使用escapechar")
-                uploaded_file.seek(0) # Reset file pointer
-                df = pd.read_csv(uploaded_file)
+            df = pd.read_csv(uploaded_file, escapechar='\\')  # 添加 escapechar 参数
         else: # .xls or .xlsx
             df = pd.read_excel(uploaded_file)
 
-        # 使用辅助函数将DataFrame导入数据库
-        if insert_dataframe_to_db(df, table_name, conn):
-            st.success(f"文件 '{uploaded_file.name}' 已成功导入到表 '{table_name}'")
-            return table_name
-        else:
-            return None
+        # 将DataFrame导入数据库
+        with conn.cursor() as cur:
+            # 检查表是否存在，如果存在则删除重建（或者可以选择追加、更新等策略）
+            cur.execute(f"DROP TABLE IF EXISTS \"{table_name}\";")
+            conn.commit()
+            # 创建表结构（这里简化处理，实际可能需要更复杂的类型推断）
+            columns = ', '.join([f'\"{col}\" TEXT' for col in df.columns])
+            create_table_sql = f'CREATE TABLE "{table_name}" ({columns});'
+            cur.execute(create_table_sql)
+            conn.commit()
 
+            # 插入数据
+            # 使用COPY FROM提高效率
+            buffer = io.StringIO()
+            # 使用标准的CSV格式: 逗号分隔, 最小引用, 双引号作为引用符, 双引号转义内部双引号
+            # quoting=1 is csv.QUOTE_MINIMAL
+            df.to_csv(buffer, index=False, header=False, sep=',', quoting=1, quotechar='"', doublequote=True)
+            buffer.seek(0)
+
+            # COPY 语句，使用标准的CSV格式 (移除显式 ESCAPE，依赖默认的双引号转义)
+            copy_sql = f"""COPY "{table_name}" FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"')"""
+            cur.copy_expert(sql=copy_sql, file=buffer)
+            conn.commit()
+        st.success(f"文件 '{uploaded_file.name}' 已成功导入到表 '{table_name}'")
+        return table_name
     except Exception as e:
         st.error(f"处理表格文件 '{uploaded_file.name}' 时出错: {e}")
         return None
@@ -391,7 +406,6 @@ def display_results(dataframe, query_context="query_result"):
     # else: dataframe is None, error handled elsewhere
 
 # --- Streamlit UI ---
-st.set_page_config(page_title="析言数据分析助手", layout="wide")
 
 st.title("析言数据分析助手")
 st.caption("上传您的数据文件（CSV, Excel, 图片, PDF），然后用自然语言提问吧！")
