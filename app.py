@@ -8,7 +8,8 @@ import io
 import time 
 import base64 
 import fitz 
-from openai import OpenAI 
+from openai import OpenAI
+import logging 
 
 st.set_page_config(page_title="析言数据分析助手", layout="wide")
 
@@ -98,31 +99,50 @@ def get_db_connection(db_config):
 def insert_dataframe_to_db(df, table_name, conn):
     """将DataFrame插入到指定的数据库表中 (覆盖现有表)"""
     try:
+        table_name = table_name.lower()  # 统一表名为小写
         with conn.cursor() as cur:
             # 检查表是否存在，如果存在则删除重建
             cur.execute(f'DROP TABLE IF EXISTS "{table_name}";')
             conn.commit()
-            # 创建表结构（简化处理，所有列为TEXT）
-            columns = ', '.join([f'"{col}" TEXT' for col in df.columns])
-            create_table_sql = f'CREATE TABLE "{table_name}" ({columns});'
+            
+            # 类型推断函数
+            def infer_sql_type(dtype):
+                if pd.api.types.is_numeric_dtype(dtype):
+                    return 'NUMERIC'
+                elif pd.api.types.is_datetime64_any_dtype(dtype):
+                    return 'TIMESTAMP'
+                elif pd.api.types.is_bool_dtype(dtype):
+                    return 'BOOLEAN'
+                else:
+                    return 'TEXT'
+            
+            # 创建表结构（根据数据类型推断列类型）
+            columns = []
+            for col in df.columns:
+                col_type = infer_sql_type(df[col].dtype)
+                columns.append(f'"{col}" {col_type}')
+            create_table_sql = f'CREATE TABLE "{table_name}" (' + ', '.join(columns) + ');'
             cur.execute(create_table_sql)
             conn.commit()
 
             # 插入数据 (使用COPY FROM提高效率)
             buffer = io.StringIO()
-            # 使用标准的CSV格式（逗号分隔，双引号引用，双引号转义）
-            # quoting=1 is csv.QUOTE_MINIMAL
             df.to_csv(buffer, index=False, header=False, sep=',', quoting=1, quotechar='"', doublequote=True)
             buffer.seek(0)
 
-            # COPY 语句，使用标准的CSV格式
-            copy_sql = f"""COPY "{table_name}" FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"', ESCAPE '"')"""
-            cur.copy_expert(sql=copy_sql, file=buffer)
+            copy_sql = """COPY %s FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"', ESCAPE '"')"""
+            cur.copy_expert(sql=copy_sql % table_name, file=buffer)
             conn.commit()
         return True
-    except Exception as e:
+    except psycopg2.Error as e:
+        logging.error(f"数据库操作失败: {e}")
         st.error(f"将数据导入表 '{table_name}' 时出错: {e}")
-        conn.rollback() # Ensure rollback on error
+        conn.rollback()
+        return False
+    except Exception as e:
+        logging.error(f"未知错误: {e}", exc_info=True)
+        st.error(f"将数据导入表 '{table_name}' 时出错: {e}")
+        conn.rollback()
         return False
 
 # --- 文件处理函数 ---
@@ -130,38 +150,18 @@ def process_tabular_file(uploaded_file, conn):
     """处理表格文件 (CSV, XLS, XLSX)"""
     try:
         file_name = os.path.splitext(uploaded_file.name)[0]
-        table_name = ''.join(filter(str.isalnum, file_name)) # 清理文件名作为表名
+        table_name = ''.join(filter(str.isalnum, file_name)).lower()  # 统一表名为小写
 
         if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file, escapechar='\\')  # 添加 escapechar 参数
+            df = pd.read_csv(uploaded_file, escapechar='\\')
         else: # .xls or .xlsx
             df = pd.read_excel(uploaded_file)
 
-        # 将DataFrame导入数据库
-        with conn.cursor() as cur:
-            # 检查表是否存在，如果存在则删除重建（或者可以选择追加、更新等策略）
-            cur.execute(f"DROP TABLE IF EXISTS \"{table_name}\";")
-            conn.commit()
-            # 创建表结构（这里简化处理，实际可能需要更复杂的类型推断）
-            columns = ', '.join([f'\"{col}\" TEXT' for col in df.columns])
-            create_table_sql = f'CREATE TABLE "{table_name}" ({columns});'
-            cur.execute(create_table_sql)
-            conn.commit()
-
-            # 插入数据
-            # 使用COPY FROM提高效率
-            buffer = io.StringIO()
-            # 使用标准的CSV格式: 逗号分隔, 最小引用, 双引号作为引用符, 双引号转义内部双引号
-            # quoting=1 is csv.QUOTE_MINIMAL
-            df.to_csv(buffer, index=False, header=False, sep=',', quoting=1, quotechar='"', doublequote=True)
-            buffer.seek(0)
-
-            # COPY 语句，使用标准的CSV格式
-            copy_sql = f"""COPY "{table_name}" FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"', ESCAPE '"')"""
-            cur.copy_expert(sql=copy_sql, file=buffer)
-            conn.commit()
-        st.success(f"文件 '{uploaded_file.name}' 已成功导入到表 '{table_name}'")
-        return table_name
+        # 使用通用函数导入数据
+        if insert_dataframe_to_db(df, table_name, conn):
+            st.success(f"文件 '{uploaded_file.name}' 已成功导入到表 '{table_name}'")
+            return table_name
+        return None
     except Exception as e:
         st.error(f"处理表格文件 '{uploaded_file.name}' 时出错: {e}")
         return None
