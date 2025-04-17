@@ -172,13 +172,6 @@ def call_vl_api(image_bytes=None, pdf_bytes=None):
     if not vl_client:
         st.error("VL 模型客户端未初始化，无法调用API。")
         return None
-    # from openai import OpenAI # Removed - client initialized globally
-    # import fitz  # PyMuPDF # Already imported globally
-
-    # client = OpenAI( # Removed - use global vl_client
-    #     api_key=VL_MODEL_KEY,
-    #     base_url=VL_MODEL_BASEURL
-    # )
 
     messages = [
         {
@@ -392,7 +385,7 @@ def execute_sql_query(conn, sql_query):
 def display_results(dataframe, query_context="query_result"):
     """在Streamlit中显示DataFrame结果和下载按钮"""
     if dataframe is not None and not dataframe.empty:
-        st.dataframe(dataframe.head(20).iloc[:, :10]) # 显示前20行10列
+        st.dataframe(dataframe.head(10).iloc[:, :10]) # 显示前10行10列
         csv = dataframe.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="下载完整表格 (CSV)",
@@ -432,9 +425,8 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 if 'result_df' not in st.session_state: # 初始化 result_df
     st.session_state.result_df = None
-if 'plotly_fig' not in st.session_state: # 初始化 plotly_fig
-    st.session_state.plotly_fig = None
 
+# 获取数据库连接
 conn = st.session_state.db_conn
 
 # --- 文件上传区域 ---
@@ -489,18 +481,6 @@ for message in st.session_state.chat_history:
         st.markdown(message["content"])
         if "dataframe" in message and message["dataframe"] is not None:
             display_results(message["dataframe"], message.get("query", "chat_result")) # Use helper function
-            # st.dataframe(message["dataframe"].head(20).iloc[:, :10]) # 显示前20行10列
-            # # 提供下载按钮
-            # csv = message["dataframe"].to_csv(index=False).encode('utf-8')
-            # st.download_button(
-            #     label="下载完整表格 (CSV)",
-            #     data=csv,
-            #     file_name=f'{message.get("query", "query_result")}.csv',
-            #     mime='text/csv',
-            # )
-        # 不再在此处显示图表
-        # if "plotly_fig" in message and message["plotly_fig"] is not None:
-        #     st.plotly_chart(message["plotly_fig"], use_container_width=True)
 
 # 获取用户输入
 user_query = st.chat_input("请输入您的问题 (例如：'统计每个产品的销售总额')")
@@ -559,93 +539,50 @@ if user_query and conn:
         st.markdown(assistant_response["content"])
         if "dataframe" in assistant_response and assistant_response["dataframe"] is not None:
             display_results(assistant_response["dataframe"], assistant_response.get("query", "last_query_result")) # Use helper function
-            # st.dataframe(assistant_response["dataframe"].head(20).iloc[:, :10]) # 显示前20行10列
-            # csv = assistant_response["dataframe"].to_csv(index=False).encode('utf-8')
-            # st.download_button(
-            #     label="下载完整表格 (CSV)",
-            #     data=csv,
-            #     file_name=f'{assistant_response.get("query", "query_result")}.csv',
-            #     mime='text/csv',
-            # )
-        # 不再在此处显示图表
-        # if "plotly_fig" in assistant_response and assistant_response["plotly_fig"] is not None:
-        #     st.plotly_chart(assistant_response["plotly_fig"], use_container_width=True)
 
 # --- 图表生成与显示区域 --- (移到聊天循环外部)
 if st.session_state.result_df is not None and not st.session_state.result_df.empty and len(st.session_state.result_df.columns) >= 2:
-    with st.expander("图表设置", expanded=True):
-        chart_type = st.selectbox(
-            "选择图表类型",
-            ["柱状图", "折线图", "饼图"],
-            key='chart_type_select' # 添加key避免状态问题
-        )
-        # 使用 session_state 中的数据
-        x_col = st.selectbox(
-            "选择X轴数据",
-            st.session_state.result_df.columns,
-            key='x_col_select'
-        )
-        y_col = st.selectbox(
-            "选择Y轴数据",
-            st.session_state.result_df.columns,
-            index=1 if len(st.session_state.result_df.columns) > 1 else 0,
-            key='y_col_select'
-        )
-        if st.button("生成图表"):
-            try:
-                fig = None
-                if chart_type == "柱状图":
-                    fig = px.bar(st.session_state.result_df, x=x_col, y=y_col, title=f'{y_col} vs {x_col}')
-                elif chart_type == "折线图":
-                    fig = px.line(st.session_state.result_df, x=x_col, y=y_col, title=f'{y_col} vs {x_col}')
-                elif chart_type == "饼图":
-                    fig = px.pie(st.session_state.result_df, names=x_col, values=y_col, title=f'{y_col} 分布 by {x_col}')
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        with st.expander("图表设置", expanded=True):
+            chart_type = st.selectbox(
+                "选择图表类型",
+                ["柱状图", "折线图", "饼图"],
+                key='chart_type_select'
+            )
+            x_col = st.selectbox(
+                "选择X轴数据",
+                st.session_state.result_df.columns,
+                key='x_col_select'
+            )
+            y_col = st.selectbox(
+                "选择Y轴数据",
+                st.session_state.result_df.columns,
+                index=1 if len(st.session_state.result_df.columns) > 1 else 0,
+                key='y_col_select'
+            )
+            if st.button("生成图表"):
+                try:
+                    fig = None
+                    if chart_type == "柱状图":
+                        fig = px.bar(st.session_state.result_df, x=x_col, y=y_col, title=f'{y_col} vs {x_col}')
+                    elif chart_type == "折线图":
+                        fig = px.line(st.session_state.result_df, x=x_col, y=y_col, title=f'{y_col} vs {x_col}')
+                    elif chart_type == "饼图":
+                        fig = px.pie(st.session_state.result_df, names=x_col, values=y_col, title=f'{y_col} 分布 by {x_col}')
 
-                if fig:
-                    st.session_state.plotly_fig = fig # 将图表存入session_state
-                else:
-                    st.warning("无法生成所选图表类型。")
-            except Exception as e:
-                st.error(f"生成图表时出错: {e}")
-                st.session_state.plotly_fig = None # 出错时清除图表
-
-# 如果 session_state 中有图表，则显示它
-if st.session_state.plotly_fig is not None:
-    st.plotly_chart(st.session_state.plotly_fig, use_container_width=True)
-
-
-        # 添加图表配置区域 (这部分代码块被移动和重构到上面了)
-        # if len(result_df.columns) >= 2:
-        #     with st.expander("图表设置", expanded=True):
-        #         chart_type = st.selectbox(
-        #             "选择图表类型",
-        #             ["柱状图", "折线图", "饼图"],
-        #             index=0
-        #         )
-        #         x_col = st.selectbox(
-        #             "选择X轴数据",
-        #             result_df.columns,
-        #             index=0
-        #         )
-        #         y_col = st.selectbox(
-        #             "选择Y轴数据",
-        #             result_df.columns,
-        #             index=1
-        #         )
-        #         if st.button("生成图表"):
-        #             try:
-        #                 if chart_type == "柱状图":
-        #                     fig = px.bar(result_df, x=x_col, y=y_col, title=f'{y_col} vs {x_col}')
-        #                 elif chart_type == "折线图":
-        #                     fig = px.line(result_df, x=x_col, y=y_col, title=f'{y_col} vs {x_col}')
-        #                 elif chart_type == "饼图":
-        #                     fig = px.pie(result_df, names=x_col, values=y_col, title=f'{y_col} 分布 by {x_col}')
-        #                 st.plotly_chart(fig, use_container_width=True)
-        #                 # 将图表信息添加到最后一条助手消息中 (不再需要)
-        #                 # if st.session_state.chat_history and st.session_state.chat_history[-1]["role"] == "assistant":
-        #                 #     st.session_state.chat_history[-1]["plotly_fig"] = fig
-        #             except Exception as e:
-        #                 st.error(f"生成图表时出错: {e}")
+                    if fig:
+                        st.session_state.plotly_fig = fig
+                    else:
+                        st.warning("无法生成所选图表类型。")
+                except Exception as e:
+                    st.error(f"生成图表时出错: {e}")
+                    st.session_state.plotly_fig = None
+    
+    with col2:
+        if st.session_state.plotly_fig is not None:
+            st.plotly_chart(st.session_state.plotly_fig, use_container_width=True, key=f"plotly_chart_{time.time()}")
 
 elif user_query and not conn:
     st.error("数据库未连接，请检查配置并重启应用。")
