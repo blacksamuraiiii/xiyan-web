@@ -5,11 +5,10 @@ import plotly.express as px
 import os
 from dotenv import load_dotenv
 import io
-import time # Added import
-import base64 # Added import
-import fitz # Added import
-from openai import OpenAI # Added import
-import time # Added import
+import time 
+import base64 
+import fitz 
+from openai import OpenAI 
 
 st.set_page_config(page_title="析言数据分析助手", layout="wide")
 
@@ -111,13 +110,13 @@ def insert_dataframe_to_db(df, table_name, conn):
 
             # 插入数据 (使用COPY FROM提高效率)
             buffer = io.StringIO()
-            # 使用标准的CSV格式（逗号分隔，双引号引用，双引号转义），最小引用
+            # 使用标准的CSV格式（逗号分隔，双引号引用，双引号转义）
             # quoting=1 is csv.QUOTE_MINIMAL
-            df.to_csv(buffer, index=False, header=False, sep=',', quoting=1, quotechar='"', doublequote=True) # quoting=1 is csv.QUOTE_MINIMAL
+            df.to_csv(buffer, index=False, header=False, sep=',', quoting=1, quotechar='"', doublequote=True)
             buffer.seek(0)
 
-            # COPY 语句，使用标准的CSV格式 (移除显式 ESCAPE，依赖默认的双引号转义)
-            copy_sql = f"""COPY "{table_name}" FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"')"""
+            # COPY 语句，使用标准的CSV格式
+            copy_sql = f"""COPY "{table_name}" FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"', ESCAPE '"')"""
             cur.copy_expert(sql=copy_sql, file=buffer)
             conn.commit()
         return True
@@ -157,8 +156,8 @@ def process_tabular_file(uploaded_file, conn):
             df.to_csv(buffer, index=False, header=False, sep=',', quoting=1, quotechar='"', doublequote=True)
             buffer.seek(0)
 
-            # COPY 语句，使用标准的CSV格式 (移除显式 ESCAPE，依赖默认的双引号转义)
-            copy_sql = f"""COPY "{table_name}" FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"')"""
+            # COPY 语句，使用标准的CSV格式
+            copy_sql = f"""COPY "{table_name}" FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"', ESCAPE '"')"""
             cur.copy_expert(sql=copy_sql, file=buffer)
             conn.commit()
         st.success(f"文件 '{uploaded_file.name}' 已成功导入到表 '{table_name}'")

@@ -10,7 +10,7 @@ COPY requirements.txt .
 # 安装依赖
 # --no-cache-dir: 不缓存下载的包，减小镜像体积
 # --trusted-host pypi.python.org --trusted-host pypi.org --trusted-host files.pythonhosted.org: 解决可能的网络问题
-RUN pip install --no-cache-dir --trusted-host pypi.python.org --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/ 
 
 # 复制项目代码到工作目录
 COPY app.py .
