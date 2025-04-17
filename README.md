@@ -51,7 +51,7 @@ DB_DATABASE=your_db_name
 2.  **步骤:**
     ```bash
     # 1. 克隆仓库
-    git clone <repository_url>
+    git clone https://github.com/blacksamuraiiii/xiyan-web)
     cd xiyan-web
 
     # 2. 创建并激活虚拟环境 (推荐)
