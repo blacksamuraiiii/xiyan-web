@@ -5,6 +5,7 @@ services:
     build: .
     ports:
       - "8501:8501"
+    restart: unless-stopped
     depends_on:
       - db
     env_file:
@@ -14,7 +15,7 @@ services:
 
   db:
     image: postgres:14-alpine
-    restart: always
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
