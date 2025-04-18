@@ -165,21 +165,43 @@ def insert_dataframe_to_db(df, table_name, conn):
 
 # --- 文件处理函数 ---
 def process_tabular_file(uploaded_file, conn):
-    """处理表格文件 (CSV, XLS, XLSX)"""
+    """处理表格文件 (CSV, XLS, XLSX)，支持Excel多工作表"""
+    created_tables = []
     try:
-        file_name = os.path.splitext(uploaded_file.name)[0]
-        table_name = ''.join(filter(str.isalnum, file_name)).lower()  # 统一表名为小写
+        base_file_name = os.path.splitext(uploaded_file.name)[0]
+        base_table_name = ''.join(filter(str.isalnum, base_file_name)).lower()
 
         if uploaded_file.name.endswith('.csv'):
             df = pd.read_csv(uploaded_file, escapechar='\\')
-        else: # .xls or .xlsx
-            df = pd.read_excel(uploaded_file)
+            if insert_dataframe_to_db(df, base_table_name, conn):
+                st.success(f"CSV 文件 '{uploaded_file.name}' 已成功导入到表 '{base_table_name}'")
+                created_tables.append(base_table_name)
+        elif uploaded_file.name.endswith(('.xls', '.xlsx')):
+            # 读取所有工作表
+            excel_data = pd.read_excel(uploaded_file, sheet_name=None)
+            if not excel_data:
+                st.warning(f"Excel 文件 '{uploaded_file.name}' 为空或无法读取。")
+                return None
 
-        # 使用通用函数导入数据
-        if insert_dataframe_to_db(df, table_name, conn):
-            st.success(f"文件 '{uploaded_file.name}' 已成功导入到表 '{table_name}'")
-            return table_name
-        return None
+            for sheet_name, df in excel_data.items():
+                # 清理工作表名并创建唯一的表名
+                cleaned_sheet_name = ''.join(filter(str.isalnum, str(sheet_name))).lower()
+                table_name = f"{base_table_name}_{cleaned_sheet_name}"
+                if not table_name: # 防止文件名和表单名都为空
+                    table_name = f"excel_sheet_{len(created_tables) + 1}"
+
+                st.info(f"正在处理工作表 '{sheet_name}' -> 表 '{table_name}'")
+                if insert_dataframe_to_db(df, table_name, conn):
+                    st.success(f"工作表 '{sheet_name}' 已成功导入到表 '{table_name}'")
+                    created_tables.append(table_name)
+                else:
+                    st.error(f"导入工作表 '{sheet_name}' 到表 '{table_name}' 失败。")
+        else:
+            st.warning(f"不支持的文件类型: {uploaded_file.name}")
+            return None
+
+        return created_tables if created_tables else None
+
     except Exception as e:
         st.error(f"处理表格文件 '{uploaded_file.name}' 时出错: {e}")
         return None
@@ -330,16 +352,7 @@ def call_xiyan_sql_api(user_query, db_schema):
         # 构建系统提示词 - 添加类型转换提示
         system_prompt = f"""你是一个强大的Text-to-SQL模型。你的角色是将用户的自然语言问题转换成PSQL查询语句，以便在以下的数据库模式上执行。
 数据库模式如下：
-{db_schema}
-
-重要提示：
-1. 如果需要对文本类型的列进行数值运算(如加减乘除)，必须使用CAST(列名 AS NUMERIC)进行显式类型转换
-2. 在比较数值时(如=, <>, >, <等)，也必须使用CAST(列名 AS NUMERIC)进行显式类型转换
-3. 例如：SELECT CAST(语文成绩 AS NUMERIC) + CAST(数学成绩 AS NUMERIC) AS 总分
-4. 比较示例：WHERE CAST(t1.语文成绩 AS NUMERIC) <> CAST(t2.语文成绩 AS NUMERIC)
-5. 确保所有数值运算和比较都进行了适当的类型转换
-6. 特别注意：每个WHERE条件必须完整，不能以OR/AND等逻辑运算符结尾
-7. 支持DROP TABLE等DDL语句"""
+{db_schema} """
 
         response = sql_client.chat.completions.create( # Use global sql_client
             model=SQL_MODEL_NAME,
@@ -348,7 +361,7 @@ def call_xiyan_sql_api(user_query, db_schema):
                 {"role": "user", "content": user_query}
             ],
             temperature=0.1,
-            max_tokens=500
+            max_tokens=8192 
         )
 
         # 解析API返回结果
@@ -460,16 +473,24 @@ if uploaded_files and conn:
         table_name = None
         file_type = uploaded_file.type
 
+        table_names = None # Initialize as None
         if file_type in ['text/csv', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']:
-            table_name = process_tabular_file(uploaded_file, conn)
+            # process_tabular_file now returns a list of table names or None
+            table_names = process_tabular_file(uploaded_file, conn)
         elif file_type.startswith('image/') or file_type == 'application/pdf':
-            table_name = process_ocr(uploaded_file, conn)
+            # process_ocr returns a single table name or None
+            single_table_name = process_ocr(uploaded_file, conn)
+            if single_table_name:
+                table_names = [single_table_name] # Wrap in a list for consistency
         else:
             st.warning(f"不支持的文件类型: {uploaded_file.name} ({file_type})")
 
-        if table_name and table_name not in st.session_state.uploaded_tables:
-            newly_uploaded_tables.append(table_name)
-            st.session_state.uploaded_tables.append(table_name)
+        # Check if table_names is a non-empty list
+        if table_names:
+            for t_name in table_names:
+                if t_name not in st.session_state.uploaded_tables:
+                    newly_uploaded_tables.append(t_name)
+                    st.session_state.uploaded_tables.append(t_name)
 
         processed_count += 1
         progress_bar.progress(processed_count / len(uploaded_files))
