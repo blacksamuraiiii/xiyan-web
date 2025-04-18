@@ -172,7 +172,6 @@ def process_tabular_file(uploaded_file, conn):
             raw_data = uploaded_file.read()
             result = chardet.detect(raw_data)
             encoding = result['encoding']
-            st.info(f"检测到的文件编码: {encoding}")
 
             try:
                 # 尝试检测到的编码
@@ -192,11 +191,9 @@ def process_tabular_file(uploaded_file, conn):
             if insert_dataframe_to_db(df, base_table_name, conn):
                 st.success(f"CSV 文件 '{uploaded_file.name}' 已成功导入到表 '{base_table_name}'")
                 created_tables.append(base_table_name)
-
         elif uploaded_file.name.endswith(('.xls', '.xlsx')):
             # 使用 calamine 引擎读取Excel文件
             excel_data = pd.read_excel(uploaded_file, sheet_name=None, engine='calamine')
-            st.info("使用 'calamine' 引擎读取 Excel 文件。")
 
             if not excel_data:
                 st.warning(f"Excel 文件 '{uploaded_file.name}' 为空或无法读取。")
@@ -210,10 +207,9 @@ def process_tabular_file(uploaded_file, conn):
                 table_name = f"{base_table_name}_{cleaned_sheet_name}"
                 if not table_name: # 防止文件名和表单名都为空
                     table_name = f"excel_sheet_{len(created_tables) + 1}"
-
-                st.info(f"正在处理工作表 '{sheet_name}' -> 表 '{table_name}'")
+                    
                 if insert_dataframe_to_db(df, table_name, conn):
-                    st.success(f"工作表 '{sheet_name}' 已成功导入到表 '{table_name}'")
+                    st.success(f"EXCEL表 '{base_file_name}'-'{sheet_name}' 已成功导入到表 '{table_name}'")
                     created_tables.append(table_name)
                 else:
                     st.error(f"导入工作表 '{sheet_name}' 到表 '{table_name}' 失败。")
@@ -327,7 +323,7 @@ def process_ocr(uploaded_file, conn):
         if df is not None and not df.empty:
             # 使用辅助函数将DataFrame导入数据库
             if insert_dataframe_to_db(df, table_name, conn):
-                st.success(f"文件 '{uploaded_file.name}' 通过OCR处理后成功导入到表 '{table_name}'")
+                st.success(f"图片 '{uploaded_file.name}' 通过OCR处理后成功导入到表 '{table_name}'")
                 return table_name
             else:
                 return None
