@@ -292,6 +292,14 @@ def call_vl_api(image_bytes=None, pdf_bytes=None):
                 csv_text = message_content.split('```csv')[1].split('```')[0].strip()
                 df = pd.read_csv(io.StringIO(csv_text))
                 return df
+            # 尝试直接解析逗号分隔的数据
+            elif ',' in message_content:
+                try:
+                    df = pd.read_csv(io.StringIO(message_content))
+                    return df
+                except Exception as e:
+                    st.warning(f"直接解析CSV数据失败: {e}")
+                    return None
             else:
                 st.warning(f"未能从API返回结果中提取有效的CSV数据。API原始返回: {message_content}")
                 return None
