@@ -164,7 +164,7 @@ def insert_dataframe_to_db(df, table_name, conn):
             buffer.seek(0)
 
             # COPY 命令将字面量 'NULL' 识别为数据库 NULL
-            copy_query = sql.SQL("COPY {table_name} FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"', ESCAPE '"', NULL 'NULL')").format(
+            copy_query = sql.SQL("COPY {table_name} FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '\"', ESCAPE '\"', NULL 'NULL')").format(
                 table_name=sql.Identifier(table_name)
             )
             cur.copy_expert(sql=copy_query, file=buffer)
