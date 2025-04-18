@@ -114,7 +114,11 @@ def insert_dataframe_to_db(df, table_name, conn):
         table_name = table_name.lower()  # 统一表名为小写
         with conn.cursor() as cur:
             # 检查表是否存在，如果存在则删除重建
-            cur.execute(f'DROP TABLE IF EXISTS "{table_name}";')
+            from psycopg2 import sql
+            drop_query = sql.SQL("DROP TABLE IF EXISTS {table_name}").format(
+                table_name=sql.Identifier(table_name)
+            )
+            cur.execute(drop_query)
             conn.commit()
 
             # 类型推断函数
@@ -132,9 +136,15 @@ def insert_dataframe_to_db(df, table_name, conn):
             columns = []
             for col in df.columns:
                 col_type = infer_sql_type(df[col].dtype)
-                columns.append(f'"{col}" {col_type}')
-            create_table_sql = f'CREATE TABLE "{table_name}" (' + ', '.join(columns) + ');'
-            cur.execute(create_table_sql)
+                columns.append(sql.SQL("{col} {type}").format(
+                    col=sql.Identifier(col),
+                    type=sql.SQL(col_type)
+                ))
+            create_query = sql.SQL("CREATE TABLE {table_name} ({columns})").format(
+                table_name=sql.Identifier(table_name),
+                columns=sql.SQL(", ").join(columns)
+            )
+            cur.execute(create_query)
             conn.commit()
 
             # 统一数据清洗和预处理
@@ -154,8 +164,10 @@ def insert_dataframe_to_db(df, table_name, conn):
             buffer.seek(0)
 
             # COPY 命令将字面量 'NULL' 识别为数据库 NULL
-            copy_sql = f"""COPY "{table_name}" FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"', ESCAPE '"', NULL 'NULL')"""
-            cur.copy_expert(sql=copy_sql, file=buffer)
+            copy_query = sql.SQL("COPY {table_name} FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"', ESCAPE '"', NULL 'NULL')").format(
+                table_name=sql.Identifier(table_name)
+            )
+            cur.copy_expert(sql=copy_query, file=buffer)
             conn.commit()
         return True
     except psycopg2.Error as e:
