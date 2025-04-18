@@ -1,17 +1,27 @@
-import streamlit as st
-import pandas as pd
-import psycopg2
-import plotly.express as px
 import os
-from dotenv import load_dotenv
 import io
 import time
 import base64
-import fitz
-import numpy as np
-from openai import OpenAI
 import logging
-import chardet  # 导入chardet库
+from datetime import datetime
+import streamlit as st
+import pandas as pd
+import psycopg2
+import numpy as np
+from dotenv import load_dotenv
+from openai import OpenAI
+import chardet
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('debug.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="析言数据分析助手", layout="wide")
 
@@ -200,14 +210,34 @@ def process_tabular_file(uploaded_file, conn):
                 return None
 
             sheet_items = list(excel_data.items())
+            
+            # 检查是否有非空工作表
+            has_non_empty_sheet = False
+            for _, df in sheet_items:
+                if not df.empty:
+                    has_non_empty_sheet = True
+                    break
+            
+            if not has_non_empty_sheet:
+                st.warning(f"Excel 文件 '{uploaded_file.name}' 所有工作表均为空。")
+                return None
 
             for sheet_name, df in sheet_items:
-                # 清理工作表名并创建唯一的表名
-                cleaned_sheet_name = ''.join(filter(str.isalnum, str(sheet_name))).lower()
-                table_name = f"{base_table_name}_{cleaned_sheet_name}"
-                if not table_name: # 防止文件名和表单名都为空
-                    table_name = f"excel_sheet_{len(created_tables) + 1}"
+                # 跳过空工作表
+                if df.empty:
+                    continue
                     
+                # 如果只有一个非空工作表，则使用文件名作为表名
+                if len([df for _, df in sheet_items if not df.empty]) == 1:
+                    table_name = base_table_name
+                # 处理多工作表情况
+                elif len(sheet_items) > 1:
+                    # 清理工作表名并创建唯一的表名
+                    cleaned_sheet_name = ''.join(filter(str.isalnum, str(sheet_name))).lower()
+                    table_name = f"{base_table_name}_{cleaned_sheet_name}"
+                    if not table_name: # 防止文件名和表单名都为空
+                        table_name = f"excel_sheet_{len(created_tables) + 1}"
+                
                 if insert_dataframe_to_db(df, table_name, conn):
                     st.success(f"EXCEL表 '{base_file_name}'-'{sheet_name}' 已成功导入到表 '{table_name}'")
                     created_tables.append(table_name)
@@ -421,12 +451,12 @@ def execute_sql_query(conn, sql_query):
                 return df, None # 返回DataFrame和无错误
             else:
                 conn.commit() # 对于非SELECT语句（如UPDATE, INSERT, DELETE），提交事务
-                return None, f"操作成功完成，影响行数: {cur.rowcount}" # 返回None和成功消息
+                return pd.DataFrame(), f"操作成功完成，影响行数: {cur.rowcount}" # 返回空DataFrame和成功消息
     except Exception as e:
         conn.rollback() # 出错时回滚
         st.error(f"执行SQL查询时出错: {e}")
         st.error(f"尝试执行的SQL: {sql_query}")
-        return None, f"执行SQL查询时出错: {e}" # 返回None和错误消息
+        return pd.DataFrame(), f"执行SQL查询时出错: {e}" # 返回空DataFrame和错误消息
 
 # --- UI 辅助函数 ---
 def display_results(dataframe, query_context="query_result"):
@@ -471,6 +501,22 @@ if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
 if 'result_df' not in st.session_state: # 初始化 result_df
     st.session_state.result_df = None
+
+# 清除所有表和重置连接
+if st.button('清除所有数据表并重置连接'):
+    if st.session_state.db_conn and not st.session_state.db_conn.closed:
+        try:
+            with st.session_state.db_conn.cursor() as cur:
+                for table in st.session_state.uploaded_tables:
+                    cur.execute(f'DROP TABLE IF EXISTS \"{table}\";')
+                st.session_state.db_conn.commit()
+            st.session_state.db_conn.close()
+            st.session_state.db_conn = None
+            st.session_state.uploaded_tables = []
+            st.session_state.result_df = None
+            st.success('所有数据表已删除，数据库连接已重置')
+        except Exception as e:
+            st.error(f'清除数据表时出错: {e}')
 
 # 获取数据库连接
 conn = st.session_state.db_conn
