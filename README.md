@@ -1,6 +1,6 @@
 # 析言数据分析助手
 
-这是一个基于 Streamlit 的 Web 应用，允许用户上传数据文件（表格、图片、PDF），通过 AI 模型进行数据提取和分析，并使用自然语言查询数据库。
+这是一个基于 Streamlit 的开源 Web 应用，允许用户上传数据文件（表格、图片、PDF），通过 AI 模型进行数据提取和分析，并使用自然语言查询数据库。项目完全开源，支持本地化私有部署。
 
 ## 功能特性
 
@@ -13,6 +13,18 @@
 *   **数据可视化:** 对查询结果自动生成 Plotly 图表进行可视化分析。
 *   **结果展示与下载:** 在界面上展示查询结果（表格和图表），并提供 CSV 格式下载。
 *   **灵活的数据库连接:** 用户可以通过界面配置数据库连接信息。
+
+## 推荐模型
+
+本项目推荐使用以下开源模型进行本地化部署：
+
+* **XiYanSQL-QwenCoder-32B-2412** - 专为SQL生成优化的模型
+  * HuggingFace: https://huggingface.co/XGenerationLab/XiYanSQL-QwenCoder-32B-2412
+  * 魔搭: https://modelscope.cn/models/XGenerationLab/XiYanSQL-QwenCoder-32B-2412
+
+* **Qwen2.5-VL-7B-Instruct** - 强大的视觉语言模型
+  * HuggingFace: https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct
+  * 魔搭: https://modelscope.cn/models/Qwen/Qwen2.5-VL-7B-Instruct
 
 ## 环境配置
 

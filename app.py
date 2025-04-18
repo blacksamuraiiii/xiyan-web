@@ -5,12 +5,13 @@ import plotly.express as px
 import os
 from dotenv import load_dotenv
 import io
-import time 
-import base64 
-import fitz 
+import time
+import base64
+import fitz
 import numpy as np
 from openai import OpenAI
-import logging 
+import logging
+import chardet  # 导入chardet库
 
 st.set_page_config(page_title="析言数据分析助手", layout="wide")
 
@@ -28,7 +29,7 @@ SQL_MODEL_NAME = os.getenv("SQL_MODEL_NAME")
 
 # --- API 客户端初始化 ---
 def get_openai_client(base_url, api_key):
-    """获取 OpenAI 客户端实例"""
+    """获取OpenAI客户端实例"""
     if not base_url or not api_key:
         st.error("缺少必要的API配置信息 (Base URL 或 API Key)")
         return None
@@ -62,7 +63,7 @@ def get_db_connection_form():
             db_user = st.text_input("用户名", value=os.getenv("DB_USER", ""))
             db_password = st.text_input("密码", value=os.getenv("DB_PASSWORD", ""), type="password")
             db_name = st.text_input("数据库名", value=os.getenv("DB_DATABASE", ""))
-            
+
             submitted = st.form_submit_button("连接数据库")
             if submitted:
                 return {
@@ -98,14 +99,14 @@ def get_db_connection(db_config):
 
 # --- 数据库辅助函数 ---
 def insert_dataframe_to_db(df, table_name, conn):
-    """将DataFrame插入到指定的数据库表中 (覆盖现有表)"""
+    """将DataFrame插入到指定的数据库表中(覆盖现有表)"""
     try:
         table_name = table_name.lower()  # 统一表名为小写
         with conn.cursor() as cur:
             # 检查表是否存在，如果存在则删除重建
             cur.execute(f'DROP TABLE IF EXISTS "{table_name}";')
             conn.commit()
-            
+
             # 类型推断函数
             def infer_sql_type(dtype):
                 if pd.api.types.is_numeric_dtype(dtype):
@@ -116,7 +117,7 @@ def insert_dataframe_to_db(df, table_name, conn):
                     return 'BOOLEAN'
                 else:
                     return 'TEXT'
-            
+
             # 创建表结构（根据数据类型推断列类型）
             columns = []
             for col in df.columns:
@@ -125,29 +126,24 @@ def insert_dataframe_to_db(df, table_name, conn):
             create_table_sql = f'CREATE TABLE "{table_name}" (' + ', '.join(columns) + ');'
             cur.execute(create_table_sql)
             conn.commit()
-            
-            # 数据清洗：去除字符串列的前后空格，并将空字符串替换为 NaN (会被 to_csv 的 na_rep 处理)
-            for col in df.select_dtypes(include=['object', 'string']).columns:
-                 # Check if the column still exists and is of object/string type
-                 if col in df.columns and pd.api.types.is_string_dtype(df[col]):
-                     df[col] = df[col].str.strip()
-                     df[col].replace('', np.nan, inplace=True) # Replace empty strings with NaN
-            
-            # 预处理数据: 确保数值列中的空值表示为 np.nan
-            # Convert potential string nulls ('', 'NULL', 'null') in numeric columns to NaN
-            numeric_cols = df.select_dtypes(include=np.number).columns # Get numeric columns dynamically
-            for col in numeric_cols:
-                 # 使用 pd.to_numeric 将列安全转换为数值类型，无法转换的值变为 NaN
-                 df[col] = pd.to_numeric(df[col], errors='coerce')
-            
+
+            # 统一数据清洗和预处理
+            for col in df.columns:
+                # 处理字符串类型列
+                if pd.api.types.is_string_dtype(df[col]):
+                    df[col] = df[col].str.strip()
+                    df[col] = df[col].replace(['', 'NULL', 'null'], np.nan)
+                # 处理数值类型列
+                elif pd.api.types.is_numeric_dtype(df[col]):
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+
             # 插入数据 (使用COPY FROM提高效率)
             buffer = io.StringIO()
             # 使用 na_rep='NULL' 和 quoting=0 (minimal) 导出, pandas handles np.nan correctly with na_rep
             df.to_csv(buffer, index=False, header=False, sep=',', quoting=0, quotechar='"', doublequote=True, na_rep='NULL')
             buffer.seek(0)
-            
+
             # COPY 命令将字面量 'NULL' 识别为数据库 NULL
-            # Format the COPY command string with the correctly quoted table name *before* passing to copy_expert
             copy_sql = f"""COPY "{table_name}" FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"', ESCAPE '"', NULL 'NULL')"""
             cur.copy_expert(sql=copy_sql, file=buffer)
             conn.commit()
@@ -165,36 +161,50 @@ def insert_dataframe_to_db(df, table_name, conn):
 
 # --- 文件处理函数 ---
 def process_tabular_file(uploaded_file, conn):
-    """处理表格文件 (CSV, XLS, XLSX)，支持Excel多工作表"""
+    """处理表格文件(CSV, XLS, XLSX)，支持Excel多工作表"""
     created_tables = []
     try:
         base_file_name = os.path.splitext(uploaded_file.name)[0]
         base_table_name = ''.join(filter(str.isalnum, base_file_name)).lower()
 
         if uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file, escapechar='\\')
+            # 使用 chardet 自动检测编码
+            raw_data = uploaded_file.read()
+            result = chardet.detect(raw_data)
+            encoding = result['encoding']
+            st.info(f"检测到的文件编码: {encoding}")
+
+            try:
+                # 尝试检测到的编码
+                df = pd.read_csv(io.BytesIO(raw_data), encoding=encoding, escapechar='\\', header=None)
+                if df.empty or len(df.columns) == 0:
+                    st.error(f"CSV文件 '{uploaded_file.name}' 为空或没有有效数据列")
+                    return None
+                # 检查是否有标题行
+                first_row = df.iloc[0]
+                if all(isinstance(x, str) and x.strip() for x in first_row):
+                    df = pd.read_csv(io.BytesIO(raw_data), encoding=encoding, escapechar='\\')
+                else:
+                    df.columns = [f'col_{i}' for i in range(len(df.columns))]
+            except Exception as e:
+                st.error(f"无法解码CSV文件 '{uploaded_file.name}'，请检查文件编码格式和内容。错误: {e}")
+                return None
             if insert_dataframe_to_db(df, base_table_name, conn):
                 st.success(f"CSV 文件 '{uploaded_file.name}' 已成功导入到表 '{base_table_name}'")
                 created_tables.append(base_table_name)
+
         elif uploaded_file.name.endswith(('.xls', '.xlsx')):
-            # 尝试使用 calamine 引擎读取，如果失败则回退到 openpyxl
-            try:
-                excel_data = pd.read_excel(uploaded_file, sheet_name=None, engine='calamine')
-                st.info("使用 'calamine' 引擎读取 Excel 文件。")
-            except Exception as e_calamine:
-                st.warning(f"使用 'calamine' 引擎读取失败 ({e_calamine})，尝试使用 'openpyxl' 引擎...")
-                try:
-                    excel_data = pd.read_excel(uploaded_file, sheet_name=None, engine='openpyxl')
-                    st.info("使用 'openpyxl' 引擎读取 Excel 文件。")
-                except Exception as e_openpyxl:
-                    st.error(f"使用 'openpyxl' 引擎读取也失败: {e_openpyxl}")
-                    excel_data = None # 确保 excel_data 在失败时为 None
+            # 使用 calamine 引擎读取Excel文件
+            excel_data = pd.read_excel(uploaded_file, sheet_name=None, engine='calamine')
+            st.info("使用 'calamine' 引擎读取 Excel 文件。")
 
             if not excel_data:
                 st.warning(f"Excel 文件 '{uploaded_file.name}' 为空或无法读取。")
                 return None
 
-            for sheet_name, df in excel_data.items():
+            sheet_items = list(excel_data.items())
+
+            for sheet_name, df in sheet_items:
                 # 清理工作表名并创建唯一的表名
                 cleaned_sheet_name = ''.join(filter(str.isalnum, str(sheet_name))).lower()
                 table_name = f"{base_table_name}_{cleaned_sheet_name}"
@@ -228,7 +238,7 @@ def call_vl_api(image_bytes=None, pdf_bytes=None):
         {
             "role": "system",
             "content": [
-                {"type": "text", "text": "你是一个OCR助手。请从图片或PDF中提取表格数据并以CSV格式返回。"}
+                {"type": "text", "text": "你是一个OCR表格识别助手,请从图片中提取表格数据并以CSV格式返回。"}
             ]
         }
     ]
@@ -246,7 +256,7 @@ def call_vl_api(image_bytes=None, pdf_bytes=None):
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             for page_num in range(min(3, len(doc))):  # 最多处理前3页
                 page = doc.load_page(page_num)
-                pix = page.get_pixmap(dpi=300)  # 高DPI提高OCR精度
+                pix = page.get_pixmap(dpi=300)
                 img_bytes = pix.tobytes("jpeg")
                 img_base64 = base64.b64encode(img_bytes).decode('utf-8')
                 user_content.append({
@@ -261,19 +271,19 @@ def call_vl_api(image_bytes=None, pdf_bytes=None):
         "type": "text",
         "text": "请将上述内容中的表格数据提取出来，并以CSV格式返回。"
     })
-    
+
     messages.append({
         "role": "user",
         "content": user_content
     })
 
     try:
-        response = vl_client.chat.completions.create( # Use global vl_client
+        response = vl_client.chat.completions.create( 
             model=VL_MODEL_NAME,
             messages=messages,
             temperature=0.1
         )
-        
+
         # 解析响应
         if response.choices and response.choices[0].message.content:
             message_content = response.choices[0].message.content
@@ -288,7 +298,7 @@ def call_vl_api(image_bytes=None, pdf_bytes=None):
         else:
             st.error(f"API调用成功，但返回结果格式不符合预期: {response}")
             return None
-            
+
     except Exception as e:
         st.error(f"调用Qwen-VL API时出错: {e}")
         return None
@@ -321,26 +331,15 @@ def process_ocr(uploaded_file, conn):
         return None
 
 # --- 自然语言查询函数 ---
-@st.cache_data(show_spinner=False) # Cache the schema based on connection and known tables
-def get_db_schema(_conn, known_tables_tuple): # Use _conn to indicate it's for caching invalidation
-    """获取数据库的表结构信息 (Cached)"""
-    # Convert tuple back to list for processing if needed, though not strictly necessary here
-    # known_tables = list(known_tables_tuple)
+@st.cache_data(show_spinner=False) 
+def get_db_schema(_conn, known_tables_tuple): 
+    """获取数据库的表结构信息(缓存)"""
+    known_tables = list(known_tables_tuple)
     schema = {}
     try:
         with _conn.cursor() as cur:
-            # 获取所有用户表名 (或者可以只获取 known_tables? 保持获取所有表可能更安全)
-            cur.execute("""
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = 'public' AND table_type = 'BASE TABLE';
-            """)
-            tables = [row[0] for row in cur.fetchall()]
-
-            # 获取每个表的列信息
-            for table_name in tables:
-                # Optional: Filter to only show known (uploaded) tables in schema prompt?
-                # if table_name in known_tables:
+            # 只获取用户上传的表信息
+            for table_name in known_tables:
                 cur.execute(f"""
                     SELECT column_name, data_type
                     FROM information_schema.columns
@@ -360,10 +359,18 @@ def call_xiyan_sql_api(user_query, db_schema):
         return None
 
     try:
-        # 构建系统提示词 - 添加类型转换提示
-        system_prompt = f"""你是一个强大的Text-to-SQL模型。你的角色是将用户的自然语言问题转换成PSQL查询语句，以便在以下的数据库模式上执行。
-数据库模式如下：
-{db_schema} """
+        # 按照官方格式构建系统提示词
+        system_prompt = f"""你是一名PostgreSQL专家，现在需要阅读并理解下面的【数据库schema】描述，运用PostgreSQL知识生成sql语句回答【用户问题】。
+【用户问题】
+{user_query}
+
+【数据库schema】
+{db_schema}
+
+重要提示:
+1. 在对列进行聚合（如 SUM, AVG）之前，如果需要将文本类型（TEXT, VARCHAR）转换为数值类型（INTEGER, NUMERIC, FLOAT），请务必先过滤掉无法成功转换的值，以避免 'invalid input syntax' 错误。例如，可以使用 `WHERE column ~ '^[0-9]+(\\.[0-9]+)?$'` 来筛选纯数字字符串，或者使用 `CASE` 语句或 `NULLIF` 结合 `CAST` 进行安全转换。
+2. 优先使用 `WHERE` 子句过滤掉非数值数据，而不是在 `SUM` 或 `AVG` 内部尝试转换。
+"""
 
         response = sql_client.chat.completions.create( # Use global sql_client
             model=SQL_MODEL_NAME,
@@ -372,12 +379,12 @@ def call_xiyan_sql_api(user_query, db_schema):
                 {"role": "user", "content": user_query}
             ],
             temperature=0.1,
-            max_tokens=8192 
+            max_tokens=8192
         )
 
         # 解析API返回结果
         generated_text = response.choices[0].message.content
-        
+
         # 提取SQL语句
         sql_query = None
         if '```sql' in generated_text:
@@ -431,7 +438,6 @@ def display_results(dataframe, query_context="query_result"):
         )
     elif dataframe is not None and dataframe.empty:
         st.info("查询成功，但结果为空。")
-    # else: dataframe is None, error handled elsewhere
 
 # --- Streamlit UI ---
 
@@ -486,10 +492,8 @@ if uploaded_files and conn:
 
         table_names = None # Initialize as None
         if file_type in ['text/csv', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']:
-            # process_tabular_file now returns a list of table names or None
             table_names = process_tabular_file(uploaded_file, conn)
         elif file_type.startswith('image/') or file_type == 'application/pdf':
-            # process_ocr returns a single table name or None
             single_table_name = process_ocr(uploaded_file, conn)
             if single_table_name:
                 table_names = [single_table_name] # Wrap in a list for consistency
@@ -570,12 +574,10 @@ if user_query and conn:
                 else: # 非SELECT查询成功
                      assistant_response["content"] = f"操作已成功执行。"
                      st.session_state.result_df = None # 清除非SELECT查询的结果
-                     # st.session_state.plotly_fig = None # Removed unused state
 
             else:
                 assistant_response = {"role": "assistant", "content": "抱歉，我无法将您的问题转换为SQL查询。请尝试换一种问法。"}
                 st.session_state.result_df = None # 清除失败查询的结果
-                # st.session_state.plotly_fig = None # Removed unused state
 
     # 将助手回复添加到聊天记录并显示
     st.session_state.chat_history.append(assistant_response)
@@ -587,7 +589,7 @@ if user_query and conn:
 # --- 图表生成与显示区域 --- (移到聊天循环外部)
 if st.session_state.result_df is not None and not st.session_state.result_df.empty and len(st.session_state.result_df.columns) >= 2:
     col1, col2 = st.columns([1, 2])
-    
+
     with col1:
         with st.expander("图表设置", expanded=True):
             chart_type = st.selectbox(
@@ -623,7 +625,7 @@ if st.session_state.result_df is not None and not st.session_state.result_df.emp
                 except Exception as e:
                     st.error(f"生成图表时出错: {e}")
                     st.session_state.plotly_fig = None
-    
+
     with col2:
         if st.session_state.plotly_fig is not None:
             st.plotly_chart(st.session_state.plotly_fig, use_container_width=True, key=f"plotly_chart_{time.time()}")
