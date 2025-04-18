@@ -8,6 +8,7 @@ import io
 import time 
 import base64 
 import fitz 
+import numpy as np # 添加 numpy 导入
 from openai import OpenAI
 import logging 
 
@@ -124,14 +125,31 @@ def insert_dataframe_to_db(df, table_name, conn):
             create_table_sql = f'CREATE TABLE "{table_name}" (' + ', '.join(columns) + ');'
             cur.execute(create_table_sql)
             conn.commit()
-
+            
+            # 数据清洗：去除字符串列的前后空格，并将空字符串替换为 NaN (会被 to_csv 的 na_rep 处理)
+            for col in df.select_dtypes(include=['object', 'string']).columns:
+                 # Check if the column still exists and is of object/string type
+                 if col in df.columns and pd.api.types.is_string_dtype(df[col]):
+                     df[col] = df[col].str.strip()
+                     df[col].replace('', np.nan, inplace=True) # Replace empty strings with NaN
+            
+            # 预处理数据: 确保数值列中的空值表示为 np.nan
+            # Convert potential string nulls ('', 'NULL', 'null') in numeric columns to NaN
+            numeric_cols = df.select_dtypes(include=np.number).columns # Get numeric columns dynamically
+            for col in numeric_cols:
+                 # 使用 pd.to_numeric 将列安全转换为数值类型，无法转换的值变为 NaN
+                 df[col] = pd.to_numeric(df[col], errors='coerce')
+            
             # 插入数据 (使用COPY FROM提高效率)
             buffer = io.StringIO()
-            df.to_csv(buffer, index=False, header=False, sep=',', quoting=1, quotechar='"', doublequote=True)
+            # 使用 na_rep='NULL' 和 quoting=0 (minimal) 导出, pandas handles np.nan correctly with na_rep
+            df.to_csv(buffer, index=False, header=False, sep=',', quoting=0, quotechar='"', doublequote=True, na_rep='NULL')
             buffer.seek(0)
-
-            copy_sql = """COPY %s FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"', ESCAPE '"')"""
-            cur.copy_expert(sql=copy_sql % table_name, file=buffer)
+            
+            # COPY 命令将字面量 'NULL' 识别为数据库 NULL
+            # Format the COPY command string with the correctly quoted table name *before* passing to copy_expert
+            copy_sql = f"""COPY "{table_name}" FROM stdin WITH (FORMAT CSV, HEADER FALSE, DELIMITER ',', QUOTE '"', ESCAPE '"', NULL 'NULL')"""
+            cur.copy_expert(sql=copy_sql, file=buffer)
             conn.commit()
         return True
     except psycopg2.Error as e:
@@ -177,7 +195,7 @@ def call_vl_api(image_bytes=None, pdf_bytes=None):
         {
             "role": "system",
             "content": [
-                {"type": "text", "text": "你是一个有用的助手。请从图片或PDF中提取表格数据并以CSV格式返回。"}
+                {"type": "text", "text": "你是一个OCR助手。请从图片或PDF中提取表格数据并以CSV格式返回。"}
             ]
         }
     ]
@@ -307,16 +325,10 @@ def call_xiyan_sql_api(user_query, db_schema):
     if not sql_client:
         st.error("SQL 模型客户端未初始化，无法调用API。")
         return None
-    # from openai import OpenAI # Removed - client initialized globally
 
     try:
-        # client = OpenAI( # Removed - use global sql_client
-        #     api_key=SQL_MODEL_KEY,
-        #     base_url=SQL_MODEL_BASEURL
-        # )
-
         # 构建系统提示词 - 添加类型转换提示
-        system_prompt = f"""你是一个强大的Text-to-SQL模型。你的角色是将用户的自然语言问题转换成PG-SQL查询语句，以便在以下的数据库模式上执行。
+        system_prompt = f"""你是一个强大的Text-to-SQL模型。你的角色是将用户的自然语言问题转换成PSQL查询语句，以便在以下的数据库模式上执行。
 数据库模式如下：
 {db_schema}
 
@@ -354,7 +366,7 @@ def call_xiyan_sql_api(user_query, db_schema):
             return sql_query
         else:
             st.warning(f"未能从API返回结果中提取有效的SQL语句。API原始返回: {generated_text}")
-            st.info("提示：请明确指定要删除的表名，例如'删除表黄维申1月统一报销0205'")
+            st.info("提示：请明确指定要删除的表名，例如'删除测试表'")
             return None
 
     except Exception as e:
