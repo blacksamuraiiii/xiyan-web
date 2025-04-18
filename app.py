@@ -481,6 +481,7 @@ def display_results(dataframe, query_context="query_result"):
             data=csv,
             file_name=f'{query_context}.csv',
             mime='text/csv',
+            key=f'download_{query_context}_{datetime.now().timestamp()}'
         )
     elif dataframe is not None and dataframe.empty:
         st.info("查询成功，但结果为空。")
