@@ -8,7 +8,7 @@ import io
 import time 
 import base64 
 import fitz 
-import numpy as np # 添加 numpy 导入
+import numpy as np
 from openai import OpenAI
 import logging 
 
@@ -177,8 +177,19 @@ def process_tabular_file(uploaded_file, conn):
                 st.success(f"CSV 文件 '{uploaded_file.name}' 已成功导入到表 '{base_table_name}'")
                 created_tables.append(base_table_name)
         elif uploaded_file.name.endswith(('.xls', '.xlsx')):
-            # 读取所有工作表
-            excel_data = pd.read_excel(uploaded_file, sheet_name=None)
+            # 尝试使用 calamine 引擎读取，如果失败则回退到 openpyxl
+            try:
+                excel_data = pd.read_excel(uploaded_file, sheet_name=None, engine='calamine')
+                st.info("使用 'calamine' 引擎读取 Excel 文件。")
+            except Exception as e_calamine:
+                st.warning(f"使用 'calamine' 引擎读取失败 ({e_calamine})，尝试使用 'openpyxl' 引擎...")
+                try:
+                    excel_data = pd.read_excel(uploaded_file, sheet_name=None, engine='openpyxl')
+                    st.info("使用 'openpyxl' 引擎读取 Excel 文件。")
+                except Exception as e_openpyxl:
+                    st.error(f"使用 'openpyxl' 引擎读取也失败: {e_openpyxl}")
+                    excel_data = None # 确保 excel_data 在失败时为 None
+
             if not excel_data:
                 st.warning(f"Excel 文件 '{uploaded_file.name}' 为空或无法读取。")
                 return None

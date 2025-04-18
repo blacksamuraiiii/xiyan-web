@@ -4,6 +4,7 @@ annotated-types==0.7.0
 anyio==4.9.0
 attrs==25.3.0
 blinker==1.9.0
+calamine==0.3.0 # Added for alternative Excel reading engine
 cachetools==5.5.2
 certifi==2025.1.31
 charset-normalizer==3.4.1
