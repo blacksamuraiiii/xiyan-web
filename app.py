@@ -11,6 +11,7 @@ import numpy as np
 from dotenv import load_dotenv
 from openai import OpenAI
 import chardet
+import plotly.express as px 
 
 # 配置日志
 logging.basicConfig(
@@ -24,6 +25,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="析言数据分析助手", layout="wide")
+
+# --- 主标题（必须放在主内容区最前面）---
+st.markdown(
+    """
+    <h1>析言数据分析助手</h1>
+    """,
+    unsafe_allow_html=True
+)
+st.caption("上传您的数据文件（CSV, Excel, 图片, PDF），然后用自然语言提问吧！")
 
 # 加载环境变量
 load_dotenv()
@@ -64,7 +74,42 @@ sql_client = cached_get_sql_client()
 # --- 数据库连接 ---
 def get_db_connection_form():
     """显示数据库连接表单"""
-    with st.expander("数据库连接配置", expanded=True):
+    # 会话状态管理器
+    class SessionManager:
+        def __init__(self):
+            self.sessions = {}
+            self.current_session_id = str(time.time())
+
+        def get_session(self, session_id=None):
+            session_id = session_id or self.current_session_id
+            if session_id not in self.sessions:
+                self.sessions[session_id] = {
+                    'db_connection': None,
+                    'created_tables': [],
+                    'query_params': {},
+                    'user_query': '',
+                    'uploaded_files': [],
+                    'file_uploader_key': str(time.time()),
+                    'uploaded_file_names': [],
+                    'uploaded_tables': []
+                }
+            return self.sessions[session_id]
+
+        def cleanup_old_sessions(self, max_age=3600):
+            current_time = time.time()
+            expired = [sid for sid, data in self.sessions.items() 
+                      if current_time - float(sid) > max_age]
+            for sid in expired:
+                del self.sessions[sid]
+
+    if 'session_manager' not in st.session_state:
+        st.session_state.session_manager = SessionManager()
+
+    session_manager = st.session_state.session_manager
+    session_manager.cleanup_old_sessions()
+    current_session = session_manager.get_session()
+        
+    with st.expander("数据库连接配置", expanded=False):
         with st.form("db_connection_form"):
             st.write("请填写数据库连接信息")
             # 从环境变量获取默认值
@@ -147,7 +192,7 @@ def insert_dataframe_to_db(df, table_name, conn):
             cur.execute(create_query)
             conn.commit()
 
-            # 统一数据清洗和预处理
+            # 数据清洗和预处理
             for col in df.columns:
                 # 处理字符串类型列
                 if pd.api.types.is_string_dtype(df[col]):
@@ -353,7 +398,7 @@ def process_ocr(uploaded_file, conn):
     """处理图片或PDF文件"""
     try:
         file_name = os.path.splitext(uploaded_file.name)[0]
-        table_name = ''.join(filter(str.isalnum, file_name)) # 清理文件名作为表名
+        table_name = ''.join(filter(str.isalnum, file_name))
         file_bytes = uploaded_file.getvalue()
 
         df = None
@@ -399,7 +444,7 @@ def get_db_schema(_conn, known_tables_tuple):
         return None
 
 def call_xiyan_sql_api(user_query, db_schema):
-    """调用XiYanSQL API将自然语言转换为SQL"""
+    """调用XiYanSQL API将自然语言转换为SQL，仅返回SQL字符串"""
     if not sql_client:
         st.error("SQL 模型客户端未初始化，无法调用API。")
         return None
@@ -444,17 +489,32 @@ def call_xiyan_sql_api(user_query, db_schema):
         else:
             st.warning(f"未能从API返回结果中提取有效的SQL语句。API原始返回: {generated_text}")
             st.info("提示：请明确指定要删除的表名，例如'删除测试表'")
-            return None
+            return None 
 
     except Exception as e:
         st.error(f"调用XiYanSQL API时出错: {e}")
-        return None
+        return None 
+
+def validate_sql(sql_query):
+    """SQL验证函数，防止危险操作"""
+    forbidden_keywords = ['DROP', 'DELETE', 'TRUNCATE', 'UPDATE', 'INSERT', 'GRANT', 'REVOKE']
+    if any(keyword in sql_query.upper() for keyword in forbidden_keywords):
+        raise ValueError(f"检测到危险操作: {sql_query}")
+    return True
+
 
 def execute_sql_query(conn, sql_query):
     """执行SQL查询并返回结果"""
     try:
+        validate_sql(sql_query)
         with conn.cursor() as cur:
-            cur.execute(sql_query)
+            # 参数化查询
+            # 参数化查询预处理
+            params = st.session_state.get('query_params', {})
+            cur.execute(sql_query, params)
+            
+            # 添加审计日志
+            logger.info(f"SQL审计 - 用户:{st.session_state.get('user')} 时间:{datetime.now()} SQL:{sql_query}")
             # 检查是否是SELECT语句
             if sql_query.strip().upper().startswith("SELECT"):
                 colnames = [desc[0] for desc in cur.description]
@@ -467,14 +527,14 @@ def execute_sql_query(conn, sql_query):
     except Exception as e:
         conn.rollback() # 出错时回滚
         st.error(f"执行SQL查询时出错: {e}")
-        st.error(f"尝试执行的SQL: {sql_query}")
+        logger.error(f"SQL执行失败: {e} - SQL:{sql_query}")
         return pd.DataFrame(), f"执行SQL查询时出错: {e}" # 返回空DataFrame和错误消息
 
 # --- UI 辅助函数 ---
 def display_results(dataframe, query_context="query_result"):
     """在Streamlit中显示DataFrame结果和下载按钮"""
     if dataframe is not None and not dataframe.empty:
-        st.dataframe(dataframe.head(10).iloc[:, :10]) # 显示前10行10列
+        st.dataframe(dataframe.head(10)) # 默认只显示前10行
         csv = dataframe.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="下载完整表格 (CSV)",
@@ -483,56 +543,90 @@ def display_results(dataframe, query_context="query_result"):
             mime='text/csv',
             key=f'download_{query_context}_{datetime.now().timestamp()}'
         )
-    elif dataframe is not None and dataframe.empty:
-        st.info("查询成功，但结果为空。")
 
-# --- Streamlit UI ---
+# --- 会话管理初始化 ---
+if 'sessions' not in st.session_state:
+    st.session_state.sessions = [{
+        "name": "新查询",
+        "history": [],
+        "generated_sql": "",
+        "edited_sql": "",
+        "sql_result_df": None,
+        "sql_result_message": None,
+        "uploaded_tables": [],
+        "db_conn": None,  # 独立数据库连接
+        "db_config": None # 独立数据库配置
+    }]
+if 'active_session_idx' not in st.session_state:
+    st.session_state.active_session_idx = 0
 
-st.title("析言数据分析助手")
-st.caption("上传您的数据文件（CSV, Excel, 图片, PDF），然后用自然语言提问吧！")
+# --- 侧边栏会话管理 ---
+with st.sidebar:
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown(
+            "<div style='font-size:1.5rem;font-weight:700;margin-bottom:0.5em;'>会话管理</div>",
+            unsafe_allow_html=True
+        )
+    with col2:
+        if st.button("➕", help="新建会话"):
+            st.session_state.sessions.append({
+                "name": "新查询",
+                "history": [],
+                "generated_sql": "",
+                "edited_sql": "",
+                "sql_result_df": None,
+                "sql_result_message": None,
+                "uploaded_tables": [],
+                "db_conn": None,  
+                "db_config": None 
+            })
+            st.session_state.active_session_idx = len(st.session_state.sessions) - 1
+            st.rerun()
 
-# 初始化数据库连接和会话状态
-if 'db_conn' not in st.session_state or st.session_state.db_conn is None or st.session_state.db_conn.closed:
-    db_config = get_db_connection_form()
-    if db_config:
-        st.session_state.db_conn = get_db_connection(db_config)
-    else:
-        st.session_state.db_conn = None
+
+    session_names = [s["name"] for s in st.session_state.sessions]
+    for idx, name in enumerate(session_names):
+        is_active = idx == st.session_state.active_session_idx
+        if st.button(
+            name,
+            key=f"session_btn_{idx}",
+            use_container_width=True,
+            type="primary" if is_active else "secondary"
+        ):
+            st.session_state.active_session_idx = idx
+            st.rerun()
+        
+
+# --- 当前会话引用 ---
+current_session = st.session_state.sessions[st.session_state.active_session_idx]
+
+# --- 独立数据库连接和表格状态 ---
+# 每个会话独立管理 db_conn/db_config/uploaded_tables
+if "db_conn" not in current_session:
+    current_session["db_conn"] = None
+if "db_config" not in current_session:
+    current_session["db_config"] = None
+if "uploaded_tables" not in current_session:
+    current_session["uploaded_tables"] = []
+
+# 初始化数据库连接和会话状态（每个会话独立）
+if current_session["db_conn"] is None or (hasattr(current_session["db_conn"], "closed") and current_session["db_conn"].closed):
+    db_config = current_session["db_config"]
+    if not db_config:
+        db_config = get_db_connection_form()
+        if db_config:
+            current_session["db_config"] = db_config
+    if db_config and current_session["db_conn"] is None:
+        current_session["db_conn"] = get_db_connection(db_config)
 else:
-    # 如果已有连接，显示连接状态
     try:
-        with st.session_state.db_conn.cursor() as cur:
+        with current_session["db_conn"].cursor() as cur:
             cur.execute('SELECT 1')
         st.success("数据库已连接")
     except:
-        st.session_state.db_conn = None
+        current_session["db_conn"] = None
         st.warning("数据库连接已断开，请重新连接")
-
-if 'uploaded_tables' not in st.session_state:
-    st.session_state.uploaded_tables = []
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
-if 'result_df' not in st.session_state: # 初始化 result_df
-    st.session_state.result_df = None
-
-# 清除所有表和重置连接
-if st.button('清除所有数据表并重置连接'):
-    if st.session_state.db_conn and not st.session_state.db_conn.closed:
-        try:
-            with st.session_state.db_conn.cursor() as cur:
-                for table in st.session_state.uploaded_tables:
-                    cur.execute(f'DROP TABLE IF EXISTS \"{table}\";')
-                st.session_state.db_conn.commit()
-            st.session_state.db_conn.close()
-            st.session_state.db_conn = None
-            st.session_state.uploaded_tables = []
-            st.session_state.result_df = None
-            st.success('所有数据表已删除，数据库连接已重置')
-        except Exception as e:
-            st.error(f'清除数据表时出错: {e}')
-
-# 获取数据库连接
-conn = st.session_state.db_conn
 
 # --- 文件上传区域 ---
 st.header("1. 上传数据文件")
@@ -541,6 +635,8 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True,
     type=['csv', 'xls', 'xlsx', 'jpg', 'png', 'pdf']
 )
+
+conn = current_session["db_conn"]
 
 if uploaded_files and conn:
     progress_bar = st.progress(0)
@@ -553,145 +649,188 @@ if uploaded_files and conn:
         table_name = None
         file_type = uploaded_file.type
 
-        table_names = None # Initialize as None
+        table_names = None
         if file_type in ['text/csv', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']:
             table_names = process_tabular_file(uploaded_file, conn)
         elif file_type.startswith('image/') or file_type == 'application/pdf':
             single_table_name = process_ocr(uploaded_file, conn)
             if single_table_name:
-                table_names = [single_table_name] # Wrap in a list for consistency
+                table_names = [single_table_name]
         else:
             st.warning(f"不支持的文件类型: {uploaded_file.name} ({file_type})")
 
-        # Check if table_names is a non-empty list
         if table_names:
             for t_name in table_names:
-                if t_name not in st.session_state.uploaded_tables:
+                if t_name not in current_session["uploaded_tables"]:
                     newly_uploaded_tables.append(t_name)
-                    st.session_state.uploaded_tables.append(t_name)
+                    current_session["uploaded_tables"].append(t_name)
 
         processed_count += 1
         progress_bar.progress(processed_count / len(uploaded_files))
 
     status_text.text(f"所有文件处理完成！新增数据表: {', '.join(newly_uploaded_tables) if newly_uploaded_tables else '无'}")
     progress_bar.empty()
-    # 清空上传列表避免重复处理
-    # st.rerun() # 强制刷新可能导致用户体验不佳，暂时注释
 
-# 显示当前数据库中的表（仅用户上传的）
-if st.session_state.uploaded_tables:
+# 显示当前数据库中的表（仅当前会话上传的）
+if current_session.get("uploaded_tables"):
     st.subheader("当前已加载的数据表:")
-    st.write(", ".join(st.session_state.uploaded_tables))
+    st.write(", ".join(current_session["uploaded_tables"]))
 
-# --- 自然语言查询区域 ---
+# --- 自然语言查询与SQL执行区域 ---
 st.header("2. 提问与分析")
 
 # 显示聊天记录
-for message in st.session_state.chat_history:
+for i, message in enumerate(current_session["history"]):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-        if "dataframe" in message and message["dataframe"] is not None:
-            display_results(message["dataframe"], message.get("query", "chat_result")) # Use helper function
+        if message.get("show_sql_editor") and message.get("sql"):
+            edited_sql_key = f"sql_edit_area_{i}"
+            edited_sql = st.text_area(
+                "编辑 SQL:",
+                value=message["sql"],
+                height=150,
+                key=edited_sql_key
+            )
+            execute_button_key = f"execute_sql_button_{i}"
+            if st.button("执行 SQL", key=execute_button_key):
+                sql_to_execute = edited_sql
+                if sql_to_execute and conn:
+                    with st.spinner('正在执行SQL查询...'):
+                        df_result, msg = execute_sql_query(conn, sql_to_execute)
+                        current_session["sql_result_df"] = df_result
+                        current_session["sql_result_message"] = msg
+                        current_session["history"][i]["show_sql_editor"] = False
+                        current_session["history"][i]["executed_sql"] = sql_to_execute
+                        result_content = "SQL执行成功。"
+                        if msg:
+                            result_content += f" 信息: {msg}"
+                        if df_result is not None and not df_result.empty:
+                             result_content += "\n查询结果（部分）已在下方显示。"
+                        elif df_result is not None and df_result.empty:
+                             result_content += " 查询结果为空。"
+
+                        current_session["history"].append({
+                            "role": "assistant",
+                            "content": result_content
+                        })
+                        current_session["generated_sql"] = ""
+                        current_session["edited_sql"] = ""
+                        st.session_state.plotly_fig = None
+                        st.rerun()
+                elif not sql_to_execute:
+                    st.warning("SQL语句不能为空。")
+                else:
+                    st.warning("请先连接数据库。")
 
 # 获取用户输入
 user_query = st.chat_input("请输入您的问题 (例如：'统计每个产品的销售总额')")
 
 if user_query and conn:
-    # 将用户问题添加到聊天记录
-    st.session_state.chat_history.append({"role": "user", "content": user_query})
+    # 如果当前会话名为“新查询”，用用户输入替换
+    if current_session["name"] == "新查询":
+        current_session["name"] = user_query.strip()[:20]  # 最多20字
+    # 清空聊天历史
+    current_session["history"] = []
+
+    # 显示用户本次查询
+    current_session["history"].append({"role": "user", "content": user_query})
     with st.chat_message("user"):
         st.markdown(user_query)
 
-    # 获取数据库结构 (使用缓存)
-    with st.spinner("正在理解您的问题并查询数据库..."):
-        # Pass tuple of known tables to ensure cache invalidation when tables change
-        known_tables_tuple = tuple(sorted(st.session_state.uploaded_tables))
+    with st.spinner("正在理解您的问题并生成SQL..."):
+        known_tables_tuple = tuple(sorted(current_session["uploaded_tables"]))
         db_schema = get_db_schema(conn, known_tables_tuple)
         if not db_schema:
-            st.error("无法获取数据库结构，无法继续查询。")
+            st.error("无法获取数据库结构，请检查连接或稍后再试。")
+            error_msg = "无法获取数据库结构，无法生成SQL。"
+            current_session["history"].append({"role": "assistant", "content": error_msg})
+            with st.chat_message("assistant"):
+                st.error(error_msg)
         else:
-            # 调用XiYanSQL API获取SQL语句
-            sql_query = call_xiyan_sql_api(user_query, db_schema)
-
-            if sql_query:
-                st.write("生成的SQL查询:")
-                st.code(sql_query, language='sql')
-
-                # 执行SQL查询
-                result_df, error_msg = execute_sql_query(conn, sql_query)
-
-                # 将结果存储在 session_state 中
-                st.session_state.result_df = result_df
-                st.session_state.plotly_fig = None # 清除旧图表
-
-                # 准备助手的回复
-                assistant_response = {"role": "assistant"}
-
-                if error_msg:
-                    assistant_response["content"] = f"抱歉，执行查询时遇到问题：\n```{error_msg}```"
-                elif result_df is not None:
-                    assistant_response["content"] = f"根据您的问题 '{user_query}'，查询结果如下："
-                    assistant_response["dataframe"] = result_df
-                    assistant_response["query"] = user_query.replace(' ', '_')[:30] # 用于文件名
-
-                else: # 非SELECT查询成功
-                     assistant_response["content"] = f"操作已成功执行。"
-                     st.session_state.result_df = None # 清除非SELECT查询的结果
-
+            generated_sql = call_xiyan_sql_api(user_query, db_schema)
+            if generated_sql:
+                current_session["generated_sql"] = generated_sql
+                current_session["edited_sql"] = generated_sql
+                current_session["sql_result_df"] = pd.DataFrame()
+                current_session["sql_result_message"] = None
+                current_session["history"].append({
+                    "role": "assistant",
+                    "content": f"我为您生成了以下SQL，请检查或编辑后执行：",
+                    "sql": generated_sql,
+                    "show_sql_editor": True
+                })
+                st.rerun()
             else:
-                assistant_response = {"role": "assistant", "content": "抱歉，我无法将您的问题转换为SQL查询。请尝试换一种问法。"}
-                st.session_state.result_df = None # 清除失败查询的结果
+                current_session["generated_sql"] = ""
+                current_session["edited_sql"] = ""
+                error_message = "抱歉，无法将您的问题转换为SQL查询。请尝试换一种问法。"
+                current_session["history"].append({"role": "assistant", "content": error_message})
+                with st.chat_message("assistant"):
+                    st.error(error_message)
 
-    # 将助手回复添加到聊天记录并显示
-    st.session_state.chat_history.append(assistant_response)
-    with st.chat_message("assistant"):
-        st.markdown(assistant_response["content"])
-        if "dataframe" in assistant_response and assistant_response["dataframe"] is not None:
-            display_results(assistant_response["dataframe"], assistant_response.get("query", "last_query_result")) # Use helper function
+# --- 图表生成与显示区域 ---
+if current_session.get("sql_result_df") is not None and not current_session["sql_result_df"].empty:
+    st.header("3. 查询结果与图表分析")
+    st.dataframe(current_session["sql_result_df"].head(10).iloc[:, :10])
+    csv = current_session["sql_result_df"].to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="下载完整结果 (CSV)",
+        data=csv,
+        file_name='query_result.csv',
+        mime='text/csv',
+        key=f'download_query_result_{datetime.now().timestamp()}'
+    )
 
-# --- 图表生成与显示区域 --- (移到聊天循环外部)
-if st.session_state.result_df is not None and not st.session_state.result_df.empty and len(st.session_state.result_df.columns) >= 2:
-    col1, col2 = st.columns([1, 2])
+    if len(current_session["sql_result_df"].columns) >= 2:
+        st.subheader("生成图表")
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            with st.expander("图表设置", expanded=True):
+                chart_type = st.selectbox(
+                    "选择图表类型",
+                    ["柱状图", "折线图", "饼图"],
+                    key='chart_type_select'
+                )
+                x_col = st.selectbox(
+                    "选择X轴数据",
+                    current_session["sql_result_df"].columns,
+                    key='x_col_select'
+                )
+                y_col = st.selectbox(
+                    "选择Y轴数据",
+                    current_session["sql_result_df"].columns,
+                    index=1 if len(current_session["sql_result_df"].columns) > 1 else 0,
+                    key='y_col_select'
+                )
+                if st.button("生成图表", key="generate_chart_button"):
+                    try:
+                        fig = None
+                        if chart_type == "柱状图":
+                            fig = px.bar(current_session["sql_result_df"], x=x_col, y=y_col, title=f'{y_col} vs {x_col}')
+                        elif chart_type == "折线图":
+                            fig = px.line(current_session["sql_result_df"], x=x_col, y=y_col, title=f'{y_col} vs {x_col}')
+                        elif chart_type == "饼图":
+                            fig = px.pie(current_session["sql_result_df"], names=x_col, values=y_col, title=f'{y_col} 分布 by {x_col}')
 
-    with col1:
-        with st.expander("图表设置", expanded=True):
-            chart_type = st.selectbox(
-                "选择图表类型",
-                ["柱状图", "折线图", "饼图"],
-                key='chart_type_select'
-            )
-            x_col = st.selectbox(
-                "选择X轴数据",
-                st.session_state.result_df.columns,
-                key='x_col_select'
-            )
-            y_col = st.selectbox(
-                "选择Y轴数据",
-                st.session_state.result_df.columns,
-                index=1 if len(st.session_state.result_df.columns) > 1 else 0,
-                key='y_col_select'
-            )
-            if st.button("生成图表"):
-                try:
-                    fig = None
-                    if chart_type == "柱状图":
-                        fig = px.bar(st.session_state.result_df, x=x_col, y=y_col, title=f'{y_col} vs {x_col}')
-                    elif chart_type == "折线图":
-                        fig = px.line(st.session_state.result_df, x=x_col, y=y_col, title=f'{y_col} vs {x_col}')
-                    elif chart_type == "饼图":
-                        fig = px.pie(st.session_state.result_df, names=x_col, values=y_col, title=f'{y_col} 分布 by {x_col}')
+                        if fig:
+                            st.session_state.plotly_fig = fig
+                        else:
+                            st.warning("无法生成所选图表类型。")
+                            st.session_state.plotly_fig = None
+                    except Exception as e:
+                        st.error(f"生成图表时出错: {e}")
+                        st.session_state.plotly_fig = None
+        with col2:
+            if 'plotly_fig' in st.session_state and st.session_state.plotly_fig is not None:
+                st.plotly_chart(st.session_state.plotly_fig, use_container_width=True)
+            else:
+                st.write("请在左侧选择数据并点击“生成图表”。")
+    else:
+        st.info("查询结果少于两列，无法生成图表。")
 
-                    if fig:
-                        st.session_state.plotly_fig = fig
-                    else:
-                        st.warning("无法生成所选图表类型。")
-                except Exception as e:
-                    st.error(f"生成图表时出错: {e}")
-                    st.session_state.plotly_fig = None
-
-    with col2:
-        if st.session_state.plotly_fig is not None:
-            st.plotly_chart(st.session_state.plotly_fig, use_container_width=True, key=f"plotly_chart_{time.time()}")
+elif current_session.get("sql_result_message"):
+    st.header("3. 操作结果")
+    st.success(current_session["sql_result_message"])
 
 elif user_query and not conn:
     st.error("数据库未连接，请检查配置并重启应用。")
