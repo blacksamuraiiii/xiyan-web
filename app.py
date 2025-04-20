@@ -60,8 +60,7 @@ st.markdown(
 )
 st.caption("上传您的数据文件（CSV, Excel, 图片, PDF），然后用自然语言提问吧！")
 
-# 页面初始化
-@st.cache_resource
+# --- LLM初始化（use llm_utils） ---
 def cached_get_sql_client():
     logger.info("Attempting to initialize SQL client...")
     client = get_openai_client(st, SQL_MODEL_BASEURL, SQL_MODEL_KEY, client_name="SQL")
@@ -85,65 +84,90 @@ vl_client = cached_get_vl_client()
 
 # --- 数据库连接 (Using db_utils) ---
 class SessionManager:
+    """会话管理器类，负责管理多个用户会话状态"""
     def __init__(self):
+        """初始化会话管理器
+        - sessions: 存储所有会话的字典
+        - current_session_id: 当前会话ID，使用时间戳和随机数生成
+        """
         self.sessions = {}
-        # Use a more robust session ID generation if needed, time might collide
+        # 使用时间戳和随机数生成会话ID，确保唯一性
         self.current_session_id = f"session_{time()}_{os.urandom(4).hex()}"
-        logger.info(f"Initializing SessionManager. Current session ID: {self.current_session_id}")
+        logger.info(f"初始化会话管理器，当前会话ID: {self.current_session_id}")
 
     def get_session(self, session_id=None):
+        """获取指定会话，如果不存在则创建新会话
+        Args:
+            session_id: 可选参数，指定要获取的会话ID
+        Returns:
+            返回指定或当前会话的状态字典
+        """
         session_id = session_id or self.current_session_id
         if session_id not in self.sessions:
-            logger.info(f"Creating new session state for ID: {session_id}")
+            logger.info(f"为新会话ID创建状态: {session_id}")
+            # 初始化会话状态数据结构
             self.sessions[session_id] = {
-                'db_connection': None,
-                'db_config': None, # Store config used for connection
-                'created_tables': [],
-                'query_params': {},
-                'user_query': '',
-                'uploaded_files': [],
-                'file_uploader_key': f"uploader_{time()}_{os.urandom(4).hex()}",
-                'uploaded_file_names': [],
-                'uploaded_tables': [],
-                'sql_query_history': [],
-                'query_result_df': None,
-                'query_result_colnames': None,
-                'last_error': None
+                'db_connection': None,  # 数据库连接对象
+                'db_config': None,      # 数据库连接配置
+                'created_tables': [],   # 已创建的表
+                'query_params': {},     # 查询参数
+                'user_query': '',       # 用户查询内容
+                'uploaded_files': [],   # 上传的文件列表
+                'file_uploader_key': f"uploader_{time()}_{os.urandom(4).hex()}",  # 文件上传器唯一键
+                'uploaded_file_names': [],  # 上传文件名列表
+                'uploaded_tables': [],  # 已上传的表名列表
+                'sql_query_history': [],  # SQL查询历史
+                'query_result_df': None,  # 查询结果DataFrame
+                'query_result_colnames': None,  # 查询结果列名
+                'last_error': None      # 最后错误信息
             }
         return self.sessions[session_id]
 
     def cleanup_old_sessions(self, max_age_seconds=3600):
+        """清理过期会话
+        Args:
+            max_age_seconds: 会话最大存活时间(秒)，默认1小时
+        """
         current_time = time()
         expired_sids = []
-        for sid in list(self.sessions.keys()): # Iterate over a copy of keys
+        # 遍历所有会话ID，找出过期的会话
+        for sid in list(self.sessions.keys()):
             try:
-                # Extract timestamp from session ID if possible (adjust if ID format changes)
+                # 从会话ID中提取时间戳(格式: session_时间戳_随机数)
                 session_time = float(sid.split('_')[1])
                 if current_time - session_time > max_age_seconds:
                     expired_sids.append(sid)
             except (IndexError, ValueError):
-                logger.warning(f"Could not determine age for session ID: {sid}. Skipping cleanup for this ID.")
+                logger.warning(f"无法从会话ID中提取时间戳: {sid}，跳过清理")
                 pass 
 
+        # 清理过期会话
         if expired_sids:
-            logger.info(f"Cleaning up {len(expired_sids)} expired sessions: {expired_sids}")
+            logger.info(f"清理 {len(expired_sids)} 个过期会话: {expired_sids}")
             for sid in expired_sids:
                 session_data = self.sessions.get(sid)
+                # 关闭会话中的数据库连接
                 if session_data and session_data.get('db_connection'):
                     try:
                         conn_to_close = session_data['db_connection']
                         if conn_to_close and not conn_to_close.closed:
                              conn_to_close.close()
-                             logger.info(f"Closed DB connection for expired session {sid}")
+                             logger.info(f"已关闭过期会话 {sid} 的数据库连接")
                     except Exception as e:
-                        logger.error(f"Error closing DB connection for expired session {sid}: {e}")
+                        logger.error(f"关闭会话 {sid} 的数据库连接时出错: {e}")
+                # 从会话字典中移除过期会话
                 self.sessions.pop(sid, None)
 
+# 初始化会话管理器(如果不存在)
 if 'session_manager' not in st.session_state:
     st.session_state.session_manager = SessionManager()
 
+# --- 会话管理 ---
+# 获取会话管理器实例
 session_manager = st.session_state.session_manager
+# 清理过期会话
 session_manager.cleanup_old_sessions() 
+# 获取当前会话状态
 current_session = session_manager.get_session() 
 
 # --- UI 辅助函数 ---
@@ -215,10 +239,14 @@ with st.sidebar:
         
 
 # --- 当前会话引用 ---
+# 从会话列表中获取当前活跃会话
 current_session = st.session_state.sessions[st.session_state.active_session_idx]
 
 # --- 独立数据库连接和表格状态 ---
-# 每个会话独立管理 db_conn/db_config/uploaded_tables
+# 每个会话独立管理以下状态:
+# db_conn: 数据库连接对象
+# db_config: 数据库连接配置
+# uploaded_tables: 已上传的表名列表
 if "db_conn" not in current_session:
     current_session["db_conn"] = None
 if "db_config" not in current_session:
