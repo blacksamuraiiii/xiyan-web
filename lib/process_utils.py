@@ -6,11 +6,13 @@ import pandas as pd
 import numpy as np
 import chardet
 import fitz  # PyMuPDF
-from llm_utils import call_vl_api
-from db_utils import insert_dataframe_to_db
+from .llm_utils import call_vl_api
+from .db_utils import insert_dataframe_to_db
 
+# log文件配置
 logger = logging.getLogger(__name__)
 
+# 处理表格文件
 def process_tabular_file(st, uploaded_file, conn):
     """处理表格文件(CSV, XLS, XLSX)，支持Excel多工作表"""
     created_tables = []
@@ -97,7 +99,7 @@ def process_tabular_file(st, uploaded_file, conn):
         logger.error(f"Error processing tabular file {uploaded_file.name}: {e}", exc_info=True)
         return None
 
-
+# 处理图片或PDF文件
 def process_ocr(st, uploaded_file, conn, vl_client, vl_model_name):
     """处理图片或PDF文件进行OCR并存入数据库"""
     try:
@@ -108,34 +110,54 @@ def process_ocr(st, uploaded_file, conn, vl_client, vl_model_name):
 
         file_bytes = uploaded_file.getvalue()
         df = None
+        image_base64_list = []
 
         if uploaded_file.type.startswith('image/'):
             logger.info(f"Processing image file {uploaded_file.name} for OCR.")
-            df = call_vl_api(st, vl_client, vl_model_name, image_bytes=file_bytes)
+            img_base64 = base64.b64encode(file_bytes).decode('utf-8')
+            image_base64_list.append(img_base64)
         elif uploaded_file.type == 'application/pdf':
             logger.info(f"Processing PDF file {uploaded_file.name} for OCR.")
-            df = call_vl_api(st, vl_client, vl_model_name, pdf_bytes=file_bytes)
+            doc = fitz.Document(stream=file_bytes, filetype="pdf")
+            num_pages_to_process = min(3, len(doc))
+            for page_num in range(num_pages_to_process):
+                page = doc.load_page(page_num)
+                pix = page.get_pixmap(dpi=300)
+                img_bytes_page = pix.tobytes("jpeg")
+                img_base64 = base64.b64encode(img_bytes_page).decode('utf-8')
+                image_base64_list.append(img_base64)
+            doc.close()
         else:
             st.warning(f"不支持的OCR文件类型: {uploaded_file.name} ({uploaded_file.type})")
             return None
+            
+        df = call_vl_api(st, vl_client, vl_model_name, image_base64_list=image_base64_list)
 
-        if df is not None and not df.empty:
-            logger.info(f"OCR successful for {uploaded_file.name}. Extracted DataFrame shape: {df.shape}")
-            # 使用辅助函数将DataFrame导入数据库
-            if insert_dataframe_to_db(st, df, table_name, conn):
-                st.success(f"文件 '{uploaded_file.name}' 通过OCR处理后成功导入到表 '{table_name}'")
-                return table_name
-            else:
-                st.error(f"OCR处理后，导入数据到表 '{table_name}' 失败。")
+        if df is not None and isinstance(df, str):
+            try:
+                # 将CSV字符串转换为DataFrame
+                df = pd.read_csv(io.StringIO(df))
+                if not df.empty:
+                    logger.info(f"OCR successful for {uploaded_file.name}. Extracted DataFrame shape: {df.shape}")
+                    # 使用辅助函数将DataFrame导入数据库
+                    if insert_dataframe_to_db(st, df, table_name, conn):
+                        st.success(f"文件 '{uploaded_file.name}' 通过OCR处理后成功导入到表 '{table_name}'")
+                        return table_name
+                    else:
+                        st.error(f"OCR处理后，导入数据到表 '{table_name}' 失败。")
+                        return None
+                else:
+                    st.warning(f"未能从文件 '{uploaded_file.name}' 中提取到表格数据 (OCR结果为空)。")
+                    logger.warning(f"OCR for {uploaded_file.name} resulted in an empty DataFrame.")
+                    return None
+            except Exception as e:
+                st.error(f"处理OCR结果时出错: {e}")
+                logger.error(f"Error processing OCR result for {uploaded_file.name}: {e}", exc_info=True)
                 return None
         elif df is None:
              # Error/warning already shown by call_vl_api
              logger.warning(f"OCR call for {uploaded_file.name} returned None.")
              return None
-        else: # df is empty
-            st.warning(f"未能从文件 '{uploaded_file.name}' 中提取到表格数据 (OCR结果为空)。")
-            logger.warning(f"OCR for {uploaded_file.name} resulted in an empty DataFrame.")
-            return None
 
     except Exception as e:
         st.error(f"处理OCR文件 '{uploaded_file.name}' 时出错: {e}")

@@ -8,8 +8,7 @@
 import io
 import logging
 import os
-from datetime import datetime, time
-
+from datetime import datetime
 # 第三方库导入
 import pandas as pd
 import plotly.express as px
@@ -17,14 +16,14 @@ import streamlit as st
 from dotenv import load_dotenv
 
 # 本地模块导入
-from db_utils import (
+from lib.db_utils import (
     execute_sql_query,
     get_db_connection,
     get_db_connection_form,
     get_db_schema,
 )
-from llm_utils import call_xiyan_sql_api, get_openai_client
-from process_utils import process_ocr, process_tabular_file
+from lib.llm_utils import call_xiyan_sql_api, get_openai_client
+from lib.process_utils import process_ocr, process_tabular_file
 
 # 加载环境变量
 load_dotenv()
@@ -92,7 +91,7 @@ class SessionManager:
         """
         self.sessions = {}
         # 使用时间戳和随机数生成会话ID，确保唯一性
-        self.current_session_id = f"session_{time()}_{os.urandom(4).hex()}"
+        self.current_session_id = f"session_{os.urandom(4).hex()}"
         logger.info(f"初始化会话管理器，当前会话ID: {self.current_session_id}")
 
     def get_session(self, session_id=None):
@@ -113,7 +112,7 @@ class SessionManager:
                 'query_params': {},     # 查询参数
                 'user_query': '',       # 用户查询内容
                 'uploaded_files': [],   # 上传的文件列表
-                'file_uploader_key': f"uploader_{time()}_{os.urandom(4).hex()}",  # 文件上传器唯一键
+                'file_uploader_key': f"uploader_{os.urandom(4).hex()}",  # 文件上传器唯一键
                 'uploaded_file_names': [],  # 上传文件名列表
                 'uploaded_tables': [],  # 已上传的表名列表
                 'sql_query_history': [],  # SQL查询历史
@@ -123,23 +122,19 @@ class SessionManager:
             }
         return self.sessions[session_id]
 
-    def cleanup_old_sessions(self, max_age_seconds=3600):
+    def cleanup_old_sessions(self, max_age_seconds=1800):
         """清理过期会话
         Args:
-            max_age_seconds: 会话最大存活时间(秒)，默认1小时
+            max_age_seconds: 会话最大存活时间(秒)，默认0.5小时
         """
-        current_time = time()
+        current_time = datetime.now().timestamp()
         expired_sids = []
         # 遍历所有会话ID，找出过期的会话
         for sid in list(self.sessions.keys()):
-            try:
-                # 从会话ID中提取时间戳(格式: session_时间戳_随机数)
-                session_time = float(sid.split('_')[1])
-                if current_time - session_time > max_age_seconds:
+            session_data = self.sessions.get(sid)
+            if session_data and session_data.get('created_time'):
+                if current_time - session_data['created_time'] > max_age_seconds:
                     expired_sids.append(sid)
-            except (IndexError, ValueError):
-                logger.warning(f"无法从会话ID中提取时间戳: {sid}，跳过清理")
-                pass 
 
         # 清理过期会话
         if expired_sids:

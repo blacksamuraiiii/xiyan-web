@@ -123,7 +123,7 @@ def call_xiyan_sql_api(st, sql_client: OpenAI, sql_model_name: str, user_query: 
         return None
 
 # 调用Qwen-VL API
-def call_vl_api(st, vl_client: OpenAI, vl_model_name: str, image_bytes=None, pdf_bytes=None):
+def call_vl_api(st, vl_client: OpenAI, vl_model_name: str, image_base64_list=None):
     """调用Qwen-VL API进行OCR识别"""
     if not vl_client:
         st.error("VL 模型客户端未初始化，无法调用API。")
@@ -138,37 +138,16 @@ def call_vl_api(st, vl_client: OpenAI, vl_model_name: str, image_bytes=None, pdf
         }
     ]
 
+    if not image_base64_list:
+        st.error("没有提供图片或有效的PDF内容进行OCR处理。")
+        return None
+
     user_content = []
-    if image_bytes:
-        img_base64 = base64.b64encode(image_bytes).decode('utf-8')
+    for img_base64 in image_base64_list:
         user_content.append({
             "type": "image_url",
             "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}
         })
-    elif pdf_bytes:
-        try:
-            # 使用PyMuPDF将PDF转换为图片
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-            num_pages_to_process = min(3, len(doc)) # 最多处理前3页
-            logger.info(f"Processing first {num_pages_to_process} pages of PDF for OCR.")
-            for page_num in range(num_pages_to_process):
-                page = doc.load_page(page_num)
-                pix = page.get_pixmap(dpi=200) # Use moderate DPI
-                img_bytes_page = pix.tobytes("jpeg")
-                img_base64 = base64.b64encode(img_bytes_page).decode('utf-8')
-                user_content.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"}
-                })
-            doc.close()
-        except Exception as pdf_e:
-            st.error(f"处理PDF时出错: {pdf_e}")
-            logger.error(f"Error processing PDF for VL API: {pdf_e}", exc_info=True)
-            return None
-
-    if not user_content:
-         st.error("没有提供图片或有效的PDF内容进行OCR处理。")
-         return None
 
     user_content.append({
         "type": "text",
@@ -208,10 +187,9 @@ def call_vl_api(st, vl_client: OpenAI, vl_model_name: str, image_bytes=None, pdf
                  logger.info("Attempting direct parse of VL API response as CSV.")
 
             if csv_text:
+                logger.info(f"Successfully received CSV text from VL API")
                 try:
-                    df = pd.read_csv(io.StringIO(csv_text))
-                    logger.info(f"Successfully parsed CSV from VL API. Shape: {df.shape}")
-                    return df
+                    return csv_text
                 except Exception as parse_e:
                     st.warning(f"无法解析从API返回的CSV数据: {parse_e}")
                     logger.warning(f"Failed to parse CSV from VL API response: {parse_e}. CSV text was: \n{csv_text}")

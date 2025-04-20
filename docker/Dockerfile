@@ -12,7 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/ 
 
 # 复制项目代码到工作目录
-COPY app.py .
+COPY ../ /app
 
 # 暴露 Streamlit 默认端口
 EXPOSE 8501

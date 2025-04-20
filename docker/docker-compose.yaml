@@ -11,7 +11,7 @@ services:
     env_file:
       - .env
     volumes:
-      - .:/app # 将当前目录挂载到容器的 /app 目录，方便开发时代码同步
+      - ../:/app # 将上级目录挂载到容器的 /app 目录，方便开发时代码同步
 
   db:
     image: postgres:14-alpine
