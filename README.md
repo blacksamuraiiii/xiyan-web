@@ -97,16 +97,17 @@ DB_DATABASE=your_db_name
     ```bash
     # 1. 克隆仓库
     git clone <repository_url>
-    cd xiyan-web
+    cd xiyan-web/docker
 
-    # 2. 复制并配置 .env 文件 (参考上面的 环境配置 部分)
+    # 2. 复制并配置环境变量
     cp .env.example .env
-    # 然后编辑 .env 文件，填入你的 VL_* 和 SQL_* API Keys。
-    # DB_* 变量会被 docker-compose.yaml 覆盖，无需在此修改。
-    #    只需要配置 VL_* 和 SQL_* 相关的环境变量。
-    #    DB_* 变量会被 docker-compose.yaml 中的设置覆盖。
+    # 编辑.env文件配置以下内容：
+    # VL_MODEL_BASEURL=你的视觉模型API地址
+    # VL_MODEL_KEY=你的视觉模型API密钥
+    # SQL_MODEL_BASEURL=你的SQL模型API地址
+    # SQL_MODEL_KEY=你的SQL模型API密钥
 
-    # 3. 使用 Docker Compose 构建并启动服务
+    # 3. 启动服务
     docker-compose up --build -d
     ```
     *   `--build` 确保镜像被构建。
@@ -138,5 +139,8 @@ DB_DATABASE=your_db_name
 ### 文件上传界面
 ![文件上传界面](./screenshots/1.上传文件数据.png)
 
-### 查询结果界面
-![查询结果界面](./screenshots/2.查询结果返回.png)
+### 提问与分析界面
+![提问与分析界面](./screenshots/2.提问与分析.png)
+
+### 查询结果与图表分析
+![查询结果与图表分析](./screenshots/3.查询结果与图表分析.png)
