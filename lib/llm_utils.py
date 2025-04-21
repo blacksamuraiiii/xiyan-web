@@ -6,20 +6,26 @@ import streamlit as st
 # log文件配置
 logger = logging.getLogger(__name__)
 
-# LLM 客户端初始化
-def get_openai_client(st, base_url, api_key, client_name="OpenAI"):
-    """获取OpenAI客户端实例"""
+# LLM 初始化
+# 通用客户端初始化函数
+def cached_get_client(st, base_url, api_key, client_name):
+    """获取并缓存OpenAI客户端实例"""
+    logger.info(f"Attempting to initialize {client_name} client...")
+    
     if not base_url or not api_key:
         st.error(f"缺少 {client_name} 模型的API配置信息 (Base URL 或 API Key)")
         logger.error(f"Missing API config for {client_name}: Base URL or API Key.")
         return None
+        
     try:
         client = OpenAI(api_key=api_key, base_url=base_url)
         logger.info(f"{client_name} client initialized successfully for base URL: {base_url}")
+        logger.info(f"{client_name} client initialized and cached.")
         return client
     except Exception as e:
         st.error(f"初始化 {client_name} 客户端时出错: {e}")
         logger.error(f"Error initializing {client_name} client: {e}", exc_info=True)
+        logger.error(f"Failed to initialize {client_name} client.")
         return None
 
 # 调用XiYan SQL API
