@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-析言数据分析助手主程序
+析言数据分析助手主程序v0.3
 功能：提供基于自然语言的数据分析界面，支持文件上传、数据库连接、SQL生成和可视化
 """
 
@@ -22,7 +22,7 @@ from lib.db_utils import (
     get_db_connection_form,
     get_db_schema,
 )
-from lib.llm_utils import call_xiyan_sql_api, get_openai_client
+from lib.llm_utils import call_xiyan_sql_api, cached_get_client
 from lib.process_utils import process_ocr, process_tabular_file
 
 # 加载环境变量
@@ -60,26 +60,8 @@ st.markdown(
 st.caption("上传您的数据文件（CSV, Excel, 图片, PDF），然后用自然语言提问吧！")
 
 # --- LLM初始化（use llm_utils） ---
-def cached_get_sql_client():
-    logger.info("Attempting to initialize SQL client...")
-    client = get_openai_client(st, SQL_MODEL_BASEURL, SQL_MODEL_KEY, client_name="SQL")
-    if client:
-        logger.info("SQL client initialized and cached.")
-    else:
-        logger.error("Failed to initialize SQL client.")
-    return client
-
-def cached_get_vl_client():
-    logger.info("Attempting to initialize VL client...")
-    client = get_openai_client(st, VL_MODEL_BASEURL, VL_MODEL_KEY, client_name="VL")
-    if client:
-        logger.info("VL client initialized and cached.")
-    else:
-        logger.error("Failed to initialize VL client.")
-    return client
-
-sql_client = cached_get_sql_client()
-vl_client = cached_get_vl_client()
+sql_client = cached_get_client(st, SQL_MODEL_BASEURL, SQL_MODEL_KEY, "SQL")
+vl_client = cached_get_client(st, VL_MODEL_BASEURL, VL_MODEL_KEY, "VL")
 
 # --- 数据库连接 (Using db_utils) ---
 class SessionManager:

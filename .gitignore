@@ -1,2 +1,4 @@
 .env
 debug.log
+/lib/__pycache__/
+/__pycache__/
