@@ -96,7 +96,7 @@ DB_DATABASE=your_db_name
 2.  **步骤:**
     ```bash
     # 1. 克隆仓库
-    git clone <repository_url>
+    git clone https://github.com/blacksamuraiiii/xiyan-web
     cd xiyan-web/docker
 
     # 2. 复制并配置环境变量
@@ -133,14 +133,14 @@ DB_DATABASE=your_db_name
 
 ## 界面截图
 
-### 数据库连接界面
+### 0.数据库连接界面
 ![数据库连接界面](./screenshots/0.数据库连接.png)
 
-### 文件上传界面
+### 1.文件上传界面
 ![文件上传界面](./screenshots/1.上传文件数据.png)
 
-### 提问与分析界面
+### 2.提问与分析界面
 ![提问与分析界面](./screenshots/2.提问与分析.png)
 
-### 查询结果与图表分析
+### 3.查询结果与图表分析
 ![查询结果与图表分析](./screenshots/3.查询结果与图表分析.png)
