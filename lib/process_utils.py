@@ -185,7 +185,6 @@ def process_ocr(st, uploaded_file, conn, vl_client, vl_model_name):
     except Exception as e:
         st.error(f"处理OCR文件 '{uploaded_file.name}' 时出错: {e}")
         logger.error(f"Error processing OCR file {uploaded_file.name}: {e}", exc_info=True)
-        return None
 
 # --- 辅助函数 --- 
 
@@ -201,8 +200,9 @@ def _handle_table_existence(st, conn, original_table_name):
         tuple: (proceed: bool, final_table_name: str, if_exists_strategy: str)
                proceed: 是否继续数据库操作。
                final_table_name: 最终使用的表名（可能被用户修改）。
-               if_exists_strategy: 用户选择的处理策略 ('replace', 'append', 'fail', 'rename')。
+               if_exists_strategy: 用户选择的处理策略 ('replace', 'append', 'fail', 'rename', 'skip', 'pending')。
                如果用户选择跳过或取消，返回 (False, final_table_name, 'skip')
+               如果等待用户输入或确认，返回 (False, final_table_name, 'pending')
     """
     # 清理原始表名以进行检查和默认使用
     sanitized_base_name = ''.join(filter(str.isalnum, original_table_name)).lower()
@@ -216,13 +216,15 @@ def _handle_table_existence(st, conn, original_table_name):
     action_key = f"{session_key_base}_action"
     rename_key = f"{session_key_base}_rename_input"
     confirm_key = f"{session_key_base}_confirm_button"
-    # 移除 confirmed_state_key，直接依赖按钮点击状态
+    confirmed_key = f"{session_key_base}_confirmed" # 新增：跟踪确认状态的key
 
     # 初始化 session state (如果不存在)
     if action_key not in st.session_state:
         st.session_state[action_key] = '替换现有表' # 默认选项
     if rename_key not in st.session_state:
         st.session_state[rename_key] = f"{sanitized_base_name}_new"
+    if confirmed_key not in st.session_state:
+        st.session_state[confirmed_key] = False # 初始化确认状态为 False
 
     table_exists = check_table_exists(conn, sanitized_base_name)
 
@@ -235,11 +237,37 @@ def _handle_table_existence(st, conn, original_table_name):
         logger.info(f"Table '{sanitized_base_name}' does not exist. Proceeding with creation.")
         return True, sanitized_base_name, 'replace'
 
-    # --- 表存在，显示用户选项 --- 
+    # --- 表存在，检查是否已确认 --- 
+    if st.session_state[confirmed_key]:
+        # 如果已确认，显示状态信息并返回之前的决定（或表示已处理）
+        # 注意：这里需要一种方式知道之前的决定是什么，或者简单地不再处理
+        # 为了简化，我们假设一旦确认，就不再需要这个函数返回可操作的状态
+        # st.info(f"表 '{sanitized_base_name}' 的操作已确认。") # 可以选择显示或不显示
+        # 返回一个非 pending/proceed 的状态，表示此项已处理完毕
+        # 这里需要小心，返回什么取决于上层如何处理。暂时返回 'skip' 表示不再处理。
+        # 或者返回之前的策略？这需要存储之前的策略。
+        # 最简单的方式是让上层逻辑在调用前检查 confirmed_key
+        # 但为了封装性，我们在这里处理。返回一个特殊状态或之前的状态。
+        # 暂时返回 'skip'，表示此项不再需要交互处理。
+        # logger.debug(f"Table '{sanitized_base_name}' already confirmed. Skipping interaction.")
+        # 思考：如果上层循环每次都调用，返回 'skip' 可能导致重复跳过信息。
+        # 更好的方式是返回之前的状态，但这需要存储。
+        # 另一种方式：返回一个新状态 'confirmed'
+        # return False, st.session_state.get(f"{session_key_base}_final_name", sanitized_base_name), st.session_state.get(f"{session_key_base}_final_strategy", 'skip')
+        # 决定：返回 'pending' 状态，但不在下面渲染控件，让上层知道无需等待此项
+        # 修正：如果已确认，应该返回之前的确认结果，否则上层逻辑会卡住或出错
+        # 需要在确认时存储结果到 session state
+        final_name = st.session_state.get(f"{session_key_base}_final_name", sanitized_base_name)
+        final_strategy = st.session_state.get(f"{session_key_base}_final_strategy", 'skip') # 默认为 skip，如果没存
+        final_proceed = st.session_state.get(f"{session_key_base}_final_proceed", False)
+        # logger.debug(f"Returning stored state for confirmed table '{sanitized_base_name}': {final_proceed}, {final_name}, {final_strategy}")
+        return final_proceed, final_name, final_strategy
+
+    # --- 表存在且未确认，显示用户选项 --- 
     st.warning(f"数据库中已存在名为 '{sanitized_base_name}' 的表 (来自文件 '{original_table_name}')。请选择操作：")
 
     # 使用列布局优化显示
-    col1, col2 = st.columns([1, 1])
+    col1, col2 = st.columns([3, 1]) # 调整比例给单选按钮更多空间
 
     with col1:
         action = st.radio(
@@ -276,17 +304,14 @@ def _handle_table_existence(st, conn, original_table_name):
         if action == '替换现有表':
             if_exists_strategy = 'replace'
             proceed = True
-            # st.info(f"将替换现有表 '{final_table_name}'。")
         elif action == '追加到现有表':
             if_exists_strategy = 'append'
             proceed = True
-            # st.info(f"将追加数据到现有表 '{final_table_name}'。")
         elif action == '重命名新表':
             # 清理并验证新表名
             proposed_name = ''.join(filter(str.isalnum, new_table_name_input)).lower()
             if not proposed_name:
                 st.error("新表名无效，不能为空或只包含特殊字符。请重新输入并确认。")
-                # 保持在当前状态，不返回，让用户修正
                 return False, sanitized_base_name, 'pending' # 特殊状态表示等待用户修正
             elif proposed_name == sanitized_base_name:
                 st.error(f"新表名 '{proposed_name}' 与现有表名相同。请选择其他操作或输入不同的新表名。")
@@ -294,29 +319,38 @@ def _handle_table_existence(st, conn, original_table_name):
             else:
                 # 检查重命名的目标表是否也存在
                 rename_target_exists = check_table_exists(conn, proposed_name)
-                if rename_target_exists:
+                if rename_target_exists is None:
+                    st.error(f"检查目标新表名 '{proposed_name}' 是否存在时出错。")
+                    return False, sanitized_base_name, 'fail'
+                elif rename_target_exists:
                     st.error(f"目标新表名 '{proposed_name}' 也已存在。请选择不同的名称或操作。")
                     return False, sanitized_base_name, 'pending'
                 else:
                     final_table_name = proposed_name
                     if_exists_strategy = 'replace' # 对新命名的表总是创建/替换
                     proceed = True
-                    # st.info(f"将创建新表 '{final_table_name}'。")
         elif action == '跳过此文件':
             if_exists_strategy = 'skip'
             proceed = False
             st.info(f"已选择跳过文件 '{original_table_name}' 的数据库操作。")
         
-        # 只有在确认后才返回最终决定
+        # 只有在确认后且操作不是 pending 时，才标记为已确认并存储状态
+        if if_exists_strategy != 'pending':
+            st.session_state[confirmed_key] = True
+            # 存储最终决定，以便下次调用时直接返回
+            st.session_state[f"{session_key_base}_final_proceed"] = proceed
+            st.session_state[f"{session_key_base}_final_name"] = final_table_name
+            st.session_state[f"{session_key_base}_final_strategy"] = if_exists_strategy
+            logger.info(f"State confirmed and stored for '{sanitized_base_name}': proceed={proceed}, name={final_table_name}, strategy={if_exists_strategy}")
+
         logger.info(f"_handle_table_existence returning: proceed={proceed}, name={final_table_name}, strategy={if_exists_strategy}")
         return proceed, final_table_name, if_exists_strategy
 
     else:
         # 如果按钮未被按下，表示用户尚未确认，不进行任何数据库操作
-        # 返回一个表示“待定”的状态，或者让调用者知道尚未做出决定
-        # 返回 (False, ..., 'pending') 或类似状态，让上层循环等待
-        # logger.debug(f"No confirmation yet for table '{sanitized_base_name}'. Waiting for user action.")
-        return False, sanitized_base_name, 'pending' # 'pending' 表示等待用户确认
+        # 返回一个表示“待定”的状态
+        # logger.debug(f"No confirmation yet for table '{sanitized_base_name}'. Returning 'pending'.")
+        return False, sanitized_base_name, 'pending'
 
 # --- 主处理函数 ---
 def process_uploaded_files(st, uploaded_files, conn, vl_client, vl_model_name):
