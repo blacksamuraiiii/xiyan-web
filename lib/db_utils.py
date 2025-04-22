@@ -53,6 +53,7 @@ def get_db_connection(st, db_config):
                 database=db_config["DB_DATABASE"],
                 connect_timeout=5 
             )
+            st.session_state.db_config_expanded = False
             st.success("数据库连接成功!")
             logger.info("Database connection successful.")
             return conn
@@ -108,8 +109,7 @@ def check_table_exists(conn, table_name):
         logger.error(f"Unexpected error checking existence of table '{sanitized_table_name}': {e}", exc_info=True)
         return None
 
-# 检查DataFrame模式与表模式是否兼容 (简化版，仅检查列名和大致数量)
-# TODO: 实现更严格的类型检查
+# 检查DataFrame模式与表模式是否兼容 (仅检查列名和大致数量)
 def _check_schema_compatibility(cur, table_name, df_columns):
     """检查DataFrame的列是否与现有表的列兼容（名称和数量）"""
     info_query = sql.SQL("SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = %s ORDER BY ordinal_position")
