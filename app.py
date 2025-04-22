@@ -289,7 +289,7 @@ if uploaded_files and conn:
         processed_count += 1
         progress_bar.progress(processed_count / len(uploaded_files))
 
-    status_text.text(f"所有文件处理完成！新增数据表: {', '.join(newly_uploaded_tables) if newly_uploaded_tables else '无'}")
+    # tatus_text.text(f"所有文件处理完成！新增数据表: {', '.join(newly_uploaded_tables) if newly_uploaded_tables else '无'}")
     progress_bar.empty()
 
 # 显示当前数据库中的表（仅当前会话上传的）
