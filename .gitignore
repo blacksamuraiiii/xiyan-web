@@ -1,4 +1,5 @@
-.env
+/docker/.env
 debug.log
+/__pycache__/
 /lib/__pycache__/
 /__pycache__/
