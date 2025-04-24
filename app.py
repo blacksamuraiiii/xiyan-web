@@ -322,7 +322,12 @@ for i, message in enumerate(current_session["history"]):
                         current_session["sql_result_message"] = msg
                         current_session["history"][i]["show_sql_editor"] = False
                         current_session["history"][i]["executed_sql"] = sql_to_execute
-                        result_content = "SQL执行成功。"
+                        # 根据执行结果设置消息
+                        if df_result is not None:
+                            result_content = "SQL执行成功。"
+                        else:
+                            # 如果 df_result 为 None，说明执行失败或未返回数据，使用 msg 作为结果
+                            result_content = f"SQL执行出错或未返回数据。"
                         if msg:
                             result_content += f" 信息: {msg}"
                         if df_result is not None and not df_result.empty:

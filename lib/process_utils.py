@@ -214,24 +214,6 @@ def _handle_table_existence(st, conn, original_table_name):
 
     # --- 表存在，检查是否已确认 --- 
     if st.session_state[confirmed_key]:
-        # 如果已确认，显示状态信息并返回之前的决定（或表示已处理）
-        # 注意：这里需要一种方式知道之前的决定是什么，或者简单地不再处理
-        # 为了简化，我们假设一旦确认，就不再需要这个函数返回可操作的状态
-        # st.info(f"表 '{sanitized_base_name}' 的操作已确认。") # 可以选择显示或不显示
-        # 返回一个非 pending/proceed 的状态，表示此项已处理完毕
-        # 这里需要小心，返回什么取决于上层如何处理。暂时返回 'skip' 表示不再处理。
-        # 或者返回之前的策略？这需要存储之前的策略。
-        # 最简单的方式是让上层逻辑在调用前检查 confirmed_key
-        # 但为了封装性，我们在这里处理。返回一个特殊状态或之前的状态。
-        # 暂时返回 'skip'，表示此项不再需要交互处理。
-        # logger.debug(f"Table '{sanitized_base_name}' already confirmed. Skipping interaction.")
-        # 思考：如果上层循环每次都调用，返回 'skip' 可能导致重复跳过信息。
-        # 更好的方式是返回之前的状态，但这需要存储。
-        # 另一种方式：返回一个新状态 'confirmed'
-        # return False, st.session_state.get(f"{session_key_base}_final_name", sanitized_base_name), st.session_state.get(f"{session_key_base}_final_strategy", 'skip')
-        # 决定：返回 'pending' 状态，但不在下面渲染控件，让上层知道无需等待此项
-        # 修正：如果已确认，应该返回之前的确认结果，否则上层逻辑会卡住或出错
-        # 需要在确认时存储结果到 session state
         final_name = st.session_state.get(f"{session_key_base}_final_name", sanitized_base_name)
         final_strategy = st.session_state.get(f"{session_key_base}_final_strategy", 'skip') # 默认为 skip，如果没存
         final_proceed = st.session_state.get(f"{session_key_base}_final_proceed", False)
@@ -401,7 +383,8 @@ def process_tabular_file(st, uploaded_file, conn):
                 else:
                     # Sanitize sheet name for table name part
                     cleaned_sheet_name = ''.join(filter(str.isalnum, str(sheet_name))).lower()
-                    original_table_name = f"{original_base_table_name}_{cleaned_sheet_name}" if cleaned_sheet_name else f"{original_base_table_name}_sheet_{len(created_tables) + 1}"
+                    # 如果有多个非空sheet，直接使用清理后的sheet名，如果清理后为空，则使用通用名称
+                    original_table_name = cleaned_sheet_name if cleaned_sheet_name else f"sheet_{len(created_tables) + 1}"
 
                 # 在插入前检查表是否存在并获取用户选择
                 proceed, final_table_name, if_exists_strategy = _handle_table_existence(st, conn, original_table_name)

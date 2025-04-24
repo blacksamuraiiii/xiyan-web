@@ -563,9 +563,11 @@ def execute_sql_query(st, conn, sql_query, params=None):
 
     except ValueError as ve:
         # Catch validation errors specifically
-        st.error(f"SQL 查询验证失败: {ve}")
+        # 捕获验证错误
+        error_msg = f"SQL 查询验证失败: {ve}"
+        st.error(error_msg)
         logger.error(f"SQL validation failed: {ve}. Query: {sql_query}")
-        return None, None
+        return None, error_msg # 返回错误消息
     except psycopg2.Error as db_err:
         st.error(f"执行 SQL 查询时出错: {db_err}")
         logger.error(f"Database error executing query: {db_err}. Query: {sql_query}", exc_info=True)
