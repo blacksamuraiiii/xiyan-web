@@ -55,8 +55,8 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-username/xiyan-data-analysis-assistant.git
-cd xiyan-data-analysis-assistant
+git clone https://github.com/blacksamuraiiii/xiyan-web.git
+cd xiyan-web
 
 # 创建虚拟环境
 python -m venv venv
@@ -78,11 +78,11 @@ streamlit run app.py
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-username/xiyan-data-analysis-assistant.git
-cd xiyan-data-analysis-assistant/docker
+git clone https://github.com/blacksamuraiiii/xiyan-web.git
+cd xiyan-web/docker
 
 # 配置环境变量
-cp .env.example .env
+cp ../.env.example .env
 # 编辑 .env 文件
 
 # 启动服务
@@ -119,12 +119,12 @@ docker-compose up --build -d
 # 视觉语言模型配置 (OCR功能)
 VL_MODEL_BASEURL=YOUR_VL_MODEL_API_BASE_URL
 VL_MODEL_KEY=YOUR_VL_MODEL_API_KEY
-VL_MODEL_NAME=qwen-vl-plus
+VL_MODEL_NAME=qwen-vl
 
 # SQL生成模型配置
 SQL_MODEL_BASEURL=YOUR_SQL_MODEL_API_BASE_URL
 SQL_MODEL_KEY=YOUR_SQL_MODEL_API_KEY
-SQL_MODEL_NAME=sql-agent
+SQL_MODEL_NAME=text2sql
 
 # 数据库连接配置
 DB_HOST=localhost
@@ -136,10 +136,10 @@ DB_DATABASE=your_db_name
 
 ### 推荐模型
 
-#### XiYanSQL-QwenCoder-32B-2412
+#### XiYanSQL-QwenCoder-32B-2504
 专为SQL生成优化的模型
-- 🤗 [HuggingFace](https://huggingface.co/XGenerationLab/XiYanSQL-QwenCoder-32B-2412)
-- 🎯 [魔搭](https://modelscope.cn/models/XGenerationLab/XiYanSQL-QwenCoder-32B-2412)
+- 🤗 [HuggingFace](https://huggingface.co/XGenerationLab/XiYanSQL-QwenCoder-32B-2504)
+- 🎯 [魔搭](https://modelscope.cn/models/XGenerationLab/XiYanSQL-QwenCoder-32B-2504)
 
 #### Qwen2.5-VL-7B-Instruct
 强大的视觉语言模型
@@ -203,8 +203,8 @@ DB_DATABASE=your_db_name
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-username/xiyan-data-analysis-assistant.git
-cd xiyan-data-analysis-assistant
+git clone https://github.com/blacksamuraiiii/xiyan-web.git
+cd xiyan-web
 
 # 创建开发分支
 git checkout -b feature/your-feature-name
@@ -286,7 +286,7 @@ flake8 .
 
 - **问题反馈**: [GitHub Issues](https://github.com/your-username/xiyan-data-analysis-assistant/issues)
 - **功能建议**: [GitHub Discussions](https://github.com/your-username/xiyan-data-analysis-assistant/discussions)
-- **邮件联系**: your-email@example.com
+- **邮件联系**: black_samurai@yeah.net
 
 ---
 

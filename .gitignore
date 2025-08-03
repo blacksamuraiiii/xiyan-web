@@ -1,8 +1,5 @@
 .gitignore
-/docker/.env
-/__pycache__/
-/lib/__pycache__/
-.gitignore
 CLAUDE.md
 TODO.md
+.env
 debug.log

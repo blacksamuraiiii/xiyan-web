@@ -26,7 +26,7 @@ from lib.llm_utils import call_xiyan_sql_api, cached_get_client
 from lib.process_utils import process_ocr, process_tabular_file
 
 # 加载环境变量
-load_dotenv("./docker/.env")
+load_dotenv(".env")
 
 # VL模型
 VL_MODEL_BASEURL = os.getenv("VL_MODEL_BASEURL")
