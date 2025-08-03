@@ -6,9 +6,103 @@ import pandas as pd
 import numpy as np
 import psycopg2
 from psycopg2 import sql
+from psycopg2.extras import execute_batch
+from contextlib import contextmanager
 
 # log文件配置
 logger = logging.getLogger(__name__)
+
+# --- 数据库连接池和性能优化 ---
+class DatabaseConnectionPool:
+    """简单的数据库连接池"""
+    def __init__(self, max_connections=5):
+        self.max_connections = max_connections
+        self.connections = []
+        self.in_use = set()
+        
+    @contextmanager
+    def get_connection(self, db_config):
+        """获取数据库连接的上下文管理器"""
+        conn = None
+        try:
+            # 尝试从池中获取可用连接
+            for i, (pooled_conn, pooled_config) in enumerate(self.connections):
+                if i not in self.in_use and pooled_config == db_config:
+                    # 检查连接是否仍然有效
+                    try:
+                        with pooled_conn.cursor() as cur:
+                            cur.execute('SELECT 1')
+                        conn = pooled_conn
+                        self.in_use.add(i)
+                        logger.info("Reusing connection from pool")
+                        break
+                    except:
+                        # 连接已失效，从池中移除
+                        self.connections.pop(i)
+                        break
+            
+            # 如果没有可用连接，创建新连接
+            if conn is None and len(self.in_use) < self.max_connections:
+                conn = self._create_connection(db_config)
+                if conn:
+                    self.connections.append((conn, db_config))
+                    self.in_use.add(len(self.connections) - 1)
+                    logger.info("Created new database connection")
+            
+            if conn:
+                yield conn
+            else:
+                raise Exception("No available database connections")
+                
+        finally:
+            # 释放连接回池中
+            if conn:
+                for i, (pooled_conn, _) in enumerate(self.connections):
+                    if pooled_conn == conn and i in self.in_use:
+                        self.in_use.remove(i)
+                        break
+    
+    def _create_connection(self, db_config):
+        """创建新的数据库连接"""
+        try:
+            return psycopg2.connect(
+                host=db_config["DB_HOST"],
+                port=db_config["DB_PORT"],
+                user=db_config["DB_USER"],
+                password=db_config["DB_PASSWORD"],
+                database=db_config["DB_DATABASE"],
+                connect_timeout=5
+            )
+        except Exception as e:
+            logger.error(f"Failed to create database connection: {e}")
+            return None
+    
+    def close_all(self):
+        """关闭所有连接"""
+        for conn, _ in self.connections:
+            try:
+                conn.close()
+            except:
+                pass
+        self.connections.clear()
+        self.in_use.clear()
+
+# 全局连接池实例
+db_pool = DatabaseConnectionPool()
+
+@contextmanager
+def get_db_connection_context(db_config):
+    """获取数据库连接的上下文管理器（简化版本）"""
+    conn = None
+    try:
+        conn = get_db_connection(None, db_config)
+        yield conn
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 # 数据库连接配置
 def get_db_connection_form(st):

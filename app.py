@@ -53,99 +53,49 @@ st.set_page_config(page_title="析言数据分析助手", layout="wide")
 # --- 主标题（必须放在主内容区最前面）---
 st.markdown(
     """
-    <h1>析言数据分析助手</h1>
+    <div style="text-align: center; padding: 2rem 0;">
+        <h1 style="color: #1E88E5; margin-bottom: 0.5rem;">📊 析言数据分析助手</h1>
+        <p style="color: #666; font-size: 1.1rem;">上传您的数据文件（CSV, Excel, 图片, PDF），然后用自然语言提问吧！</p>
+    </div>
     """,
     unsafe_allow_html=True
 )
-st.caption("上传您的数据文件（CSV, Excel, 图片, PDF），然后用自然语言提问吧！")
 
 # --- LLM初始化（use llm_utils） ---
 sql_client = cached_get_client(st, SQL_MODEL_BASEURL, SQL_MODEL_KEY, "SQL")
 vl_client = cached_get_client(st, VL_MODEL_BASEURL, VL_MODEL_KEY, "VL")
 
-# --- 数据库连接 (Using db_utils) ---
-class SessionManager:
-    """会话管理器类，负责管理多个用户会话状态"""
-    def __init__(self):
-        """初始化会话管理器
-        - sessions: 存储所有会话的字典
-        - current_session_id: 当前会话ID，使用时间戳和随机数生成
-        """
-        self.sessions = {}
-        # 使用时间戳和随机数生成会话ID，确保唯一性
-        self.current_session_id = f"session_{os.urandom(4).hex()}"
-        logger.info(f"初始化会话管理器，当前会话ID: {self.current_session_id}")
+# --- 简化的会话管理 ---
+def init_session_state():
+    """初始化会话状态"""
+    if 'sessions' not in st.session_state:
+        st.session_state.sessions = [{
+            "name": "新查询",
+            "history": [],
+            "generated_sql": "",
+            "edited_sql": "",
+            "sql_result_df": None,
+            "sql_result_message": None,
+            "uploaded_tables": [],
+            "db_conn": None,
+            "db_config": None
+        }]
+    if 'active_session_idx' not in st.session_state:
+        st.session_state.active_session_idx = 0
 
-    def get_session(self, session_id=None):
-        """获取指定会话，如果不存在则创建新会话
-        Args:
-            session_id: 可选参数，指定要获取的会话ID
-        Returns:
-            返回指定或当前会话的状态字典
-        """
-        session_id = session_id or self.current_session_id
-        if session_id not in self.sessions:
-            logger.info(f"为新会话ID创建状态: {session_id}")
-            # 初始化会话状态数据结构
-            self.sessions[session_id] = {
-                'db_connection': None,  # 数据库连接对象
-                'db_config': None,      # 数据库连接配置
-                'created_tables': [],   # 已创建的表
-                'query_params': {},     # 查询参数
-                'user_query': '',       # 用户查询内容
-                'uploaded_files': [],   # 上传的文件列表
-                'file_uploader_key': f"uploader_{os.urandom(4).hex()}",  # 文件上传器唯一键
-                'uploaded_file_names': [],  # 上传文件名列表
-                'uploaded_tables': [],  # 已上传的表名列表
-                'sql_query_history': [],  # SQL查询历史
-                'query_result_df': None,  # 查询结果DataFrame
-                'query_result_colnames': None,  # 查询结果列名
-                'last_error': None      # 最后错误信息
-            }
-        return self.sessions[session_id]
+# 初始化会话状态
+init_session_state()
 
-    def cleanup_old_sessions(self, max_age_seconds=1800):
-        """清理过期会话
-        Args:
-            max_age_seconds: 会话最大存活时间(秒)，默认0.5小时
-        """
-        current_time = datetime.now().timestamp()
-        expired_sids = []
-        # 遍历所有会话ID，找出过期的会话
-        for sid in list(self.sessions.keys()):
-            session_data = self.sessions.get(sid)
-            if session_data and session_data.get('created_time'):
-                if current_time - session_data['created_time'] > max_age_seconds:
-                    expired_sids.append(sid)
+# --- 获取当前会话 ---
+current_session = st.session_state.sessions[st.session_state.active_session_idx]
 
-        # 清理过期会话
-        if expired_sids:
-            logger.info(f"清理 {len(expired_sids)} 个过期会话: {expired_sids}")
-            for sid in expired_sids:
-                session_data = self.sessions.get(sid)
-                # 关闭会话中的数据库连接
-                if session_data and session_data.get('db_connection'):
-                    try:
-                        conn_to_close = session_data['db_connection']
-                        if conn_to_close and not conn_to_close.closed:
-                             conn_to_close.close()
-                             logger.info(f"已关闭过期会话 {sid} 的数据库连接")
-                    except Exception as e:
-                        logger.error(f"关闭会话 {sid} 的数据库连接时出错: {e}")
-                # 从会话字典中移除过期会话
-                self.sessions.pop(sid, None)
-
-# 初始化会话管理器(如果不存在)
-if 'session_manager' not in st.session_state:
-    st.session_state.session_manager = SessionManager()
-
-# --- 会话管理 ---
-# 获取会话管理器实例
-session_manager = st.session_state.session_manager
-# 清理过期会话
-session_manager.cleanup_old_sessions() 
-# 获取当前会话状态
-current_session = session_manager.get_session() 
+# --- 数据库连接状态初始化 ---
+if "db_conn" not in current_session:
+    current_session["db_conn"] = None
+if "db_config" not in current_session:
+    current_session["db_config"] = None
+if "uploaded_tables" not in current_session:
+    current_session["uploaded_tables"] = [] 
 
 # --- UI 辅助函数 ---
 def display_results(dataframe, query_context="query_result"):
@@ -161,21 +111,7 @@ def display_results(dataframe, query_context="query_result"):
             key=f'download_{query_context}_{datetime.now().timestamp()}'
         )
 
-# --- 会话管理初始化 ---
-if 'sessions' not in st.session_state:
-    st.session_state.sessions = [{
-        "name": "新查询",
-        "history": [],
-        "generated_sql": "",
-        "edited_sql": "",
-        "sql_result_df": None,
-        "sql_result_message": None,
-        "uploaded_tables": [],
-        "db_conn": None,  # 独立数据库连接
-        "db_config": None # 独立数据库配置
-    }]
-if 'active_session_idx' not in st.session_state:
-    st.session_state.active_session_idx = 0
+# --- 会话管理已在上方初始化 ---
 
 # --- 侧边栏会话管理 ---
 with st.sidebar:
@@ -215,21 +151,7 @@ with st.sidebar:
             st.rerun()
         
 
-# --- 当前会话引用 ---
-# 从会话列表中获取当前活跃会话
-current_session = st.session_state.sessions[st.session_state.active_session_idx]
-
-# --- 独立数据库连接和表格状态 ---
-# 每个会话独立管理以下状态:
-# db_conn: 数据库连接对象
-# db_config: 数据库连接配置
-# uploaded_tables: 已上传的表名列表
-if "db_conn" not in current_session:
-    current_session["db_conn"] = None
-if "db_config" not in current_session:
-    current_session["db_config"] = None
-if "uploaded_tables" not in current_session:
-    current_session["uploaded_tables"] = []
+# --- 数据库连接和表格状态已在上方初始化 ---
 
 # 初始化数据库连接和会话状态（每个会话独立）
 if current_session["db_conn"] is None or (hasattr(current_session["db_conn"], "closed") and current_session["db_conn"].closed):
@@ -250,12 +172,50 @@ else:
         st.warning("数据库连接已断开，请重新连接")
 
 # --- 文件上传区域 ---
-st.header("1. 上传数据文件")
-uploaded_files = st.file_uploader(
-    "选择CSV, XLS, XLSX, JPG, PNG, 或 PDF 文件",
-    accept_multiple_files=True,
-    type=['csv', 'xls', 'xlsx', 'jpg', 'png', 'pdf']
-)
+st.markdown("---")
+col1, col2 = st.columns([1, 3])
+
+with col1:
+    st.markdown("### 📁 文件上传")
+    st.markdown("""
+        <div style="background-color: #f0f8ff; padding: 1rem; border-radius: 0.5rem; border-left: 4px solid #1E88E5;">
+            <p style="margin: 0; font-size: 0.9rem; color: #555;">
+                <strong>支持的格式：</strong><br>
+                📄 CSV, Excel<br>
+                🖼️ JPG, PNG<br>
+                📑 PDF
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+
+with col2:
+    # 美化的文件上传区域
+    st.markdown("""
+        <div style="
+            border: 2px dashed #1E88E5;
+            border-radius: 10px;
+            padding: 2rem;
+            text-align: center;
+            background-color: #f8f9fa;
+            transition: all 0.3s ease;
+        ">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">📁</div>
+            <div style="font-size: 1.1rem; color: #666; margin-bottom: 0.5rem;">
+                <strong>拖拽文件到此处或点击选择</strong>
+            </div>
+            <div style="font-size: 0.9rem; color: #888;">
+                支持 CSV、Excel、图片 (JPG/PNG)、PDF 文件
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    uploaded_files = st.file_uploader(
+        "",
+        accept_multiple_files=True,
+        type=['csv', 'xls', 'xlsx', 'jpg', 'png', 'pdf'],
+        help="支持CSV、Excel文件、图片文件和PDF文件",
+        label_visibility="collapsed"
+    )
 
 conn = current_session["db_conn"]
 
@@ -294,11 +254,36 @@ if uploaded_files and conn:
 
 # 显示当前数据库中的表（仅当前会话上传的）
 if current_session.get("uploaded_tables"):
-    st.subheader("当前已加载的数据表:")
-    st.write(", ".join(current_session["uploaded_tables"]))
+    st.markdown("---")
+    st.markdown("### 📋 已加载的数据表")
+    
+    # 创建美观的表格显示
+    table_data = []
+    for i, table_name in enumerate(current_session["uploaded_tables"], 1):
+        table_data.append({
+            "序号": i,
+            "表名": table_name,
+            "状态": "✅ 已加载"
+        })
+    
+    if table_data:
+        df_tables = pd.DataFrame(table_data)
+        st.dataframe(
+            df_tables,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "序号": st.column_config.NumberColumn(width="small"),
+                "表名": st.column_config.TextColumn(width="medium"),
+                "状态": st.column_config.TextColumn(width="small")
+            }
+        )
+else:
+    st.info("📭 暂无已加载的数据表，请先上传文件")
 
 # --- 自然语言查询与SQL执行区域 ---
-st.header("2. 提问与分析")
+st.markdown("---")
+st.markdown("### 💬 数据分析")
 
 # 显示聊天记录
 for i, message in enumerate(current_session["history"]):
@@ -396,7 +381,8 @@ if user_query and conn:
 
 # --- 图表生成与显示区域 ---
 if current_session.get("sql_result_df") is not None and not current_session["sql_result_df"].empty:
-    st.header("3. 查询结果与图表分析")
+    st.markdown("---")
+    st.markdown("### 📈 查询结果与图表分析")
     st.dataframe(current_session["sql_result_df"].head(10).iloc[:, :10])
     csv = current_session["sql_result_df"].to_csv(index=False).encode('utf-8')
     st.download_button(

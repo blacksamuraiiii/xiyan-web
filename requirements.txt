@@ -1,0 +1,33 @@
+# 析言数据分析助手依赖包
+# XiYan Data Analysis Assistant Dependencies
+
+# 核心依赖
+streamlit>=1.35.0
+pandas>=2.2.0
+numpy>=2.2.0
+plotly>=6.0.0
+psycopg2-binary>=2.9.0
+openai>=1.74.0
+python-dotenv>=1.0.0
+
+# 文件处理
+chardet>=5.2.0
+PyMuPDF>=1.24.0
+python-calamine>=0.3.0
+openpyxl>=3.1.0
+xlrd>=2.0.0
+Pillow>=10.0.0
+
+# 数据处理和验证
+pydantic>=2.11.0
+pyarrow>=19.0.0
+
+# 网络和工具
+requests>=2.32.0
+tenacity>=9.1.0
+
+# 可选依赖（用于开发和测试）
+# pytest>=7.0.0
+# pytest-cov>=4.0.0
+# black>=23.0.0
+# flake8>=6.0.0

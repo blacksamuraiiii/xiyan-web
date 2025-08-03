@@ -1,5 +1,8 @@
+.gitignore
 /docker/.env
-debug.log
 /__pycache__/
 /lib/__pycache__/
-/__pycache__/
+.gitignore
+CLAUDE.md
+TODO.md
+debug.log

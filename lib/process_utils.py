@@ -13,6 +13,83 @@ from .db_utils import insert_dataframe_to_db, check_table_exists
 # log文件配置
 logger = logging.getLogger(__name__)
 
+# --- 统一错误处理函数 ---
+def handle_error(st, error_message, exception=None, error_code=None, user_suggestion=None):
+    """统一的错误处理函数，提供标准化的错误消息格式
+    
+    Args:
+        st: Streamlit对象
+        error_message: 错误消息
+        exception: 异常对象（可选）
+        error_code: 错误代码（可选）
+        user_suggestion: 用户建议（可选）
+    """
+    # 构建完整的错误消息
+    full_message = error_message
+    
+    if error_code:
+        full_message = f"错误代码: {error_code} - {full_message}"
+    
+    if user_suggestion:
+        full_message += f"\n\n💡 建议: {user_suggestion}"
+    
+    # 显示给用户
+    st.error(full_message)
+    
+    # 记录日志
+    if exception:
+        logger.error(f"{error_message} - Exception: {str(exception)}", exc_info=True)
+    else:
+        logger.error(error_message)
+
+def show_success(st, success_message, details=None):
+    """统一的成功消息显示函数
+    
+    Args:
+        st: Streamlit对象
+        success_message: 成功消息
+        details: 详细信息（可选）
+    """
+    if details:
+        full_message = f"✅ {success_message}\n\n{details}"
+    else:
+        full_message = f"✅ {success_message}"
+    
+    st.success(full_message)
+    logger.info(success_message)
+
+def show_warning(st, warning_message, details=None):
+    """统一的警告消息显示函数
+    
+    Args:
+        st: Streamlit对象
+        warning_message: 警告消息
+        details: 详细信息（可选）
+    """
+    if details:
+        full_message = f"⚠️ {warning_message}\n\n{details}"
+    else:
+        full_message = f"⚠️ {warning_message}"
+    
+    st.warning(full_message)
+    logger.warning(warning_message)
+
+def show_info(st, info_message, details=None):
+    """统一的信息消息显示函数
+    
+    Args:
+        st: Streamlit对象
+        info_message: 信息消息
+        details: 详细信息（可选）
+    """
+    if details:
+        full_message = f"ℹ️ {info_message}\n\n{details}"
+    else:
+        full_message = f"ℹ️ {info_message}"
+    
+    st.info(full_message)
+    logger.info(info_message)
+
 
 # --- 主处理函数 ---
 def process_uploaded_files(st, uploaded_files, conn, vl_client, vl_model_name):
@@ -48,28 +125,47 @@ def process_uploaded_files(st, uploaded_files, conn, vl_client, vl_model_name):
                     result = process_tabular_file(st, uploaded_file, conn)
                     if result: processed_tables.extend(result)
             elif file_name.endswith(('.xls', '.xlsx')):
-                 try:
-                    excel_data = pd.read_excel(uploaded_file, sheet_name=None, engine='calamine')
-                    if excel_data:
-                        non_empty_sheets = [(name, df) for name, df in excel_data.items() if not df.empty]
-                        for sheet_name, df_sheet in non_empty_sheets:
-                            # 直接使用sheet名称生成表名
-                            cleaned_sheet_name = ''.join(filter(str.isalnum, str(sheet_name))).lower()
-                            original_table_name = cleaned_sheet_name if cleaned_sheet_name else f"sheet_{len(processed_tables) + len(files_pending_confirmation) + 1}"
-                            
-                            sanitized_name = ''.join(filter(str.isalnum, original_table_name)).lower()
-                            if sanitized_name and check_table_exists(conn, sanitized_name):
-                                files_pending_confirmation.append({'file': uploaded_file, 'type': 'excel_sheet', 'original_name': original_table_name, 'sheet_name': sheet_name, 'df': df_sheet})
-                            else:
-                                # 表不存在，直接处理该sheet
-                                if insert_dataframe_to_db(st, df_sheet, sanitized_name, conn, if_exists='replace'):
-                                     st.success(f"EXCEL表 '{sheet_name}' 已成功创建表 '{sanitized_name}'。")  # 移除了文件名显示
-                                     processed_tables.append(sanitized_name)
-                                else:
-                                     st.error(f"创建表 '{sanitized_name}' 从工作表 '{sheet_name}' 失败。")
-                 except Exception as e:
-                     st.error(f"读取Excel文件 '{file_name}' 时出错: {e}")
-                     logger.error(f"Error reading Excel {file_name} during pre-check: {e}", exc_info=True)
+                 # 增强的Excel预检查：多引擎支持
+                 engines = ['calamine', 'openpyxl', 'xlrd']
+                 excel_data = None
+                 successful_engine = None
+                 
+                 for engine in engines:
+                     try:
+                         uploaded_file.seek(0)
+                         excel_data = pd.read_excel(uploaded_file, sheet_name=None, engine=engine)
+                         if excel_data:
+                             successful_engine = engine
+                             logger.info(f"Successfully read Excel {file_name} using engine: {engine} during pre-check")
+                             break
+                     except ImportError:
+                         continue
+                     except Exception as e:
+                         logger.warning(f"Engine {engine} failed for {file_name} during pre-check: {e}")
+                         continue
+                 
+                 if excel_data is None:
+                     st.error(f"无法读取Excel文件 '{file_name}'，已尝试所有可用的解析引擎。请检查文件格式是否正确。")
+                     logger.error(f"All Excel engines failed for {file_name} during pre-check")
+                     continue
+                     
+                 if excel_data:
+                     non_empty_sheets = [(name, df) for name, df in excel_data.items() if not df.empty]
+                     for sheet_name, df_sheet in non_empty_sheets:
+                         # 直接使用sheet名称生成表名
+                         cleaned_sheet_name = ''.join(filter(str.isalnum, str(sheet_name))).lower()
+                         original_table_name = cleaned_sheet_name if cleaned_sheet_name else f"sheet_{len(processed_tables) + len(files_pending_confirmation) + 1}"
+                         
+                         sanitized_name = ''.join(filter(str.isalnum, original_table_name)).lower()
+                         if sanitized_name and check_table_exists(conn, sanitized_name):
+                             files_pending_confirmation.append({'file': uploaded_file, 'type': 'excel_sheet', 'original_name': original_table_name, 'sheet_name': sheet_name, 'df': df_sheet})
+                         else:
+                             # 表不存在，直接处理该sheet
+                             if insert_dataframe_to_db(st, df_sheet, sanitized_name, conn, if_exists='replace'):
+                                  st.success(f"EXCEL表 '{sheet_name}' 已成功创建表 '{sanitized_name}'。")  # 移除了文件名显示
+                                  processed_tables.append(sanitized_name)
+                             else:
+                                  st.error(f"创建表 '{sanitized_name}' 从工作表 '{sheet_name}' 失败。")
 
         elif file_type.startswith('image/') or file_type == 'application/pdf':
             # OCR 文件
@@ -106,16 +202,43 @@ def process_uploaded_files(st, uploaded_files, conn, vl_client, vl_model_name):
             elif proceed:
                 # 用户已确认，执行操作
                 if file_type == 'csv':
-                    # 需要重新读取文件内容，因为之前的读取可能在另一个分支
+                    # 需要重新读取文件内容，使用增强的CSV解析逻辑
                     try:
                         uploaded_file.seek(0) # 重置文件指针
                         raw_data = uploaded_file.read()
                         result = chardet.detect(raw_data)
-                        encoding = result['encoding']
-                        df = pd.read_csv(io.BytesIO(raw_data), encoding=encoding, escapechar='\\')
-                        if all(isinstance(col, int) for col in df.columns) or len(df) == 0:
-                            df = pd.read_csv(io.BytesIO(raw_data), encoding=encoding, escapechar='\\', header=None)
-                            df.columns = [f'col_{i}' for i in range(len(df.columns))]
+                        detected_encoding = result['encoding']
+                        
+                        # 使用相同的多种编码尝试机制
+                        encodings_to_try = ['utf-8', 'gbk', 'gb2312', 'latin1', detected_encoding]
+                        encodings_to_try = [enc for enc in encodings_to_try if enc is not None]
+                        
+                        df = None
+                        successful_encoding = None
+                        
+                        for encoding in encodings_to_try:
+                            try:
+                                uploaded_file.seek(0)
+                                df = pd.read_csv(io.BytesIO(raw_data), encoding=encoding, escapechar='\\')
+                                
+                                if all(isinstance(col, int) for col in df.columns) or len(df) == 0:
+                                    uploaded_file.seek(0)
+                                    df = pd.read_csv(io.BytesIO(raw_data), encoding=encoding, escapechar='\\', header=None)
+                                    df.columns = [f'col_{i}' for i in range(len(df.columns))]
+                                
+                                if not df.empty and len(df.columns) > 0:
+                                    successful_encoding = encoding
+                                    break
+                                    
+                            except UnicodeDecodeError:
+                                continue
+                            except Exception:
+                                continue
+                        
+                        if df is None:
+                            st.error(f"无法重新读取确认后的CSV文件 '{uploaded_file.name}'")
+                            logger.error(f"Failed to re-read confirmed CSV {uploaded_file.name}")
+                            continue
                         
                         if insert_dataframe_to_db(st, df, final_table_name, conn, if_exists=if_exists_strategy):
                             st.success(f"CSV 文件 '{uploaded_file.name}' 已成功操作表 '{final_table_name}' (策略: {if_exists_strategy})。")
@@ -319,27 +442,64 @@ def process_tabular_file(st, uploaded_file, conn):
         original_base_table_name = base_file_name 
 
         if uploaded_file.name.endswith('.csv'):
-            # 使用 chardet 自动检测编码
+            # 增强的CSV解析：多种编码尝试和改进错误处理
             raw_data = uploaded_file.read()
             result = chardet.detect(raw_data)
-            encoding = result['encoding']
-            logger.info(f"Detected encoding for {uploaded_file.name}: {encoding}")
+            detected_encoding = result['encoding']
+            logger.info(f"Detected encoding for {uploaded_file.name}: {detected_encoding}")
 
-            try:
-                df = pd.read_csv(io.BytesIO(raw_data), encoding=encoding, escapechar='\\')
-                if all(isinstance(col, int) for col in df.columns) or len(df) == 0:
-                    # Reread without header
-                    df = pd.read_csv(io.BytesIO(raw_data), encoding=encoding, escapechar='\\', header=None)
-                    df.columns = [f'col_{i}' for i in range(len(df.columns))]
+            # 多种编码尝试列表
+            encodings_to_try = ['utf-8', 'gbk', 'gb2312', 'latin1', detected_encoding]
+            encodings_to_try = [enc for enc in encodings_to_try if enc is not None]
+            
+            df = None
+            successful_encoding = None
+            
+            for encoding in encodings_to_try:
+                try:
+                    # 重置文件指针位置
+                    uploaded_file.seek(0)
+                    df = pd.read_csv(io.BytesIO(raw_data), encoding=encoding, escapechar='\\')
+                    
+                    # 检查列名是否为整数类型，如果是则重新读取为无标题行
+                    if all(isinstance(col, int) for col in df.columns) or len(df) == 0:
+                        uploaded_file.seek(0)
+                        df = pd.read_csv(io.BytesIO(raw_data), encoding=encoding, escapechar='\\', header=None)
+                        df.columns = [f'col_{i}' for i in range(len(df.columns))]
+                    
+                    # 验证数据有效性
+                    if not df.empty and len(df.columns) > 0:
+                        successful_encoding = encoding
+                        logger.info(f"Successfully read CSV {uploaded_file.name} with encoding: {encoding}")
+                        break
+                        
+                except UnicodeDecodeError:
+                    logger.warning(f"Encoding {encoding} failed for {uploaded_file.name}, trying next...")
+                    continue
+                except Exception as e:
+                    logger.warning(f"Error reading CSV {uploaded_file.name} with encoding {encoding}: {e}")
+                    continue
 
-                if df.empty or len(df.columns) == 0:
-                    st.error(f"CSV文件 '{uploaded_file.name}' 为空或没有有效数据列")
-                    return None
-
-            except Exception as e:
-                st.error(f"无法解码或读取CSV文件 '{uploaded_file.name}'，请检查文件编码格式和内容。错误: {e}")
-                logger.error(f"Error reading CSV {uploaded_file.name}: {e}", exc_info=True)
+            if df is None:
+                handle_error(
+                    st, 
+                    f"无法解码CSV文件 '{uploaded_file.name}'，已尝试多种编码格式。",
+                    error_code="CSV_DECODE_ERROR",
+                    user_suggestion="请检查文件内容是否为有效的CSV格式，或尝试将文件保存为UTF-8编码后重新上传。"
+                )
                 return None
+            
+            if df.empty or len(df.columns) == 0:
+                handle_error(
+                    st,
+                    f"CSV文件 '{uploaded_file.name}' 为空或没有有效数据列",
+                    error_code="CSV_EMPTY_ERROR",
+                    user_suggestion="请检查文件内容，确保包含有效的数据。"
+                )
+                return None
+
+            # 记录成功使用的编码
+            logger.info(f"CSV {uploaded_file.name} successfully parsed using encoding: {successful_encoding}")
             
             # 在插入前检查表是否存在并获取用户选择
             proceed, final_table_name, if_exists_strategy = _handle_table_existence(st, conn, original_base_table_name)
@@ -355,12 +515,33 @@ def process_tabular_file(st, uploaded_file, conn):
                 pass
 
         elif uploaded_file.name.endswith(('.xls', '.xlsx')):
-            try:
-                # 使用 calamine 引擎读取Excel文件
-                excel_data = pd.read_excel(uploaded_file, sheet_name=None, engine='calamine')
-            except Exception as e:
-                st.error(f"读取 Excel 文件 '{uploaded_file.name}' 时出错: {e}")
-                logger.error(f"Error reading Excel {uploaded_file.name}: {e}", exc_info=True)
+            # 增强的Excel解析：多引擎支持
+            engines = ['calamine', 'openpyxl', 'xlrd']
+            excel_data = None
+            successful_engine = None
+            
+            for engine in engines:
+                try:
+                    uploaded_file.seek(0)  # 重置文件指针
+                    excel_data = pd.read_excel(uploaded_file, sheet_name=None, engine=engine)
+                    if excel_data:
+                        successful_engine = engine
+                        logger.info(f"Successfully read Excel {uploaded_file.name} using engine: {engine}")
+                        break
+                except ImportError:
+                    logger.warning(f"Engine {engine} not available for {uploaded_file.name}")
+                    continue
+                except Exception as e:
+                    logger.warning(f"Engine {engine} failed for {uploaded_file.name}: {e}")
+                    continue
+            
+            if excel_data is None:
+                handle_error(
+                    st,
+                    f"无法读取Excel文件 '{uploaded_file.name}'，已尝试所有可用的解析引擎。",
+                    error_code="EXCEL_READ_ERROR",
+                    user_suggestion="请检查文件格式是否正确，或尝试将文件保存为较新的Excel格式后重新上传。"
+                )
                 return None
 
             if not excel_data:
@@ -451,19 +632,52 @@ def process_ocr(st, uploaded_file, conn, vl_client, vl_model_name, force_process
 
         if uploaded_file.type.startswith('image/'):
             logger.info(f"Processing image file {uploaded_file.name} for OCR.")
-            img_base64 = base64.b64encode(file_bytes).decode('utf-8')
-            image_base64_list.append(img_base64)
+            # 增强的图片格式支持：统一转换为RGB格式
+            try:
+                from PIL import Image
+                img = Image.open(io.BytesIO(file_bytes))
+                img = img.convert('RGB')  # 统一转换为RGB格式
+                buffer = io.BytesIO()
+                img.save(buffer, format='JPEG')
+                img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                image_base64_list.append(img_base64)
+                img.close()  # 释放内存
+                buffer.close()
+            except ImportError:
+                logger.warning("PIL not available, using raw image data")
+                img_base64 = base64.b64encode(file_bytes).decode('utf-8')
+                image_base64_list.append(img_base64)
+            except Exception as e:
+                logger.error(f"Image conversion failed for {uploaded_file.name}: {e}")
+                img_base64 = base64.b64encode(file_bytes).decode('utf-8')
+                image_base64_list.append(img_base64)
+                
         elif uploaded_file.type == 'application/pdf':
             logger.info(f"Processing PDF file {uploaded_file.name} for OCR.")
-            doc = fitz.Document(stream=file_bytes, filetype="pdf")
-            num_pages_to_process = min(3, len(doc))
-            for page_num in range(num_pages_to_process):
-                page = doc.load_page(page_num)
-                pix = page.get_pixmap(dpi=300)
-                img_bytes_page = pix.tobytes("jpeg")
-                img_base64 = base64.b64encode(img_bytes_page).decode('utf-8')
-                image_base64_list.append(img_base64)
-            doc.close()
+            try:
+                doc = fitz.Document(stream=file_bytes, filetype="pdf")
+                num_pages_to_process = min(3, len(doc))  # 限制处理页数以节省内存
+                
+                for page_num in range(num_pages_to_process):
+                    try:
+                        page = doc.load_page(page_num)
+                        # 优化DPI设置：平衡质量和内存使用
+                        pix = page.get_pixmap(dpi=200)  # 降低DPI从300到200
+                        img_bytes_page = pix.tobytes("jpeg")
+                        img_base64 = base64.b64encode(img_bytes_page).decode('utf-8')
+                        image_base64_list.append(img_base64)
+                        # 显式释放内存
+                        del pix
+                    except Exception as e:
+                        logger.error(f"Error processing page {page_num} in {uploaded_file.name}: {e}")
+                        continue
+                
+                doc.close()
+                logger.info(f"Processed {num_pages_to_process} pages from {uploaded_file.name}")
+            except Exception as e:
+                logger.error(f"Error opening PDF {uploaded_file.name}: {e}")
+                st.error(f"无法打开PDF文件 '{uploaded_file.name}'，文件可能已损坏。")
+                return None
         else:
             st.warning(f"不支持的OCR文件类型: {uploaded_file.name} ({uploaded_file.type})")
             return None
