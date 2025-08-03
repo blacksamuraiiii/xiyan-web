@@ -3,3 +3,5 @@ CLAUDE.md
 TODO.md
 .env
 debug.log
+lib/__pycache__/
+tests/小微ict清单.xlsx

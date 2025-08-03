@@ -371,9 +371,15 @@ def insert_dataframe_to_db(st, df, table_name, conn, if_exists='replace'):
 
             # --- 数据清洗和预处理 (对所有插入/追加操作) ---
             df_copy = df_renamed.copy() # 使用重命名后的列进行清洗
+            
+            # 首先处理所有列的数据类型转换和空值处理
             for col in df_copy.columns:
-                # 仅对 object 或 string 类型尝试清洗
-                if pd.api.types.is_string_dtype(df_copy[col].dtype) or df_copy[col].dtype == 'object':
+                # 处理数值类型的列 - 确保正确的数据类型并处理空值
+                if pd.api.types.is_numeric_dtype(df_copy[col].dtype):
+                    # 将空字符串和空白转换为NaN，确保数值类型
+                    df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce')
+                # 处理字符串类型的列
+                elif pd.api.types.is_string_dtype(df_copy[col].dtype) or df_copy[col].dtype == 'object':
                     try:
                         # 确保列是字符串类型以应用 .str 访问器
                         df_copy[col] = df_copy[col].astype(str).str.strip()
@@ -386,6 +392,7 @@ def insert_dataframe_to_db(st, df, table_name, conn, if_exists='replace'):
             # --- 数据插入 (使用COPY FROM) ---
             buffer = io.StringIO()
             # 使用更安全的CSV写入，确保正确处理引号和分隔符
+            # 使用空字符串来表示NaN值，PostgreSQL COPY命令会将其识别为NULL
             df_copy.to_csv(buffer, index=False, header=False, sep=',', na_rep='', quoting=1) # quoting=1 means csv.QUOTE_ALL
             buffer.seek(0)
 
