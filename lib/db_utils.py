@@ -340,11 +340,10 @@ def insert_dataframe_to_db(st, df, table_name, conn, if_exists='replace'):
                         if getattr(dtype, 'tz', None) is not None:
                             return 'TIMESTAMP WITH TIME ZONE'
                         else:
-                            return 'TIMESTAMP WITHOUT TIME ZONE'
-                    elif pd.api.types.is_bool_dtype(dtype):
-                        return 'BOOLEAN'
+                            return 'TIMESTAMP'  # 简化为TIMESTAMP，兼容性好
                     else:
-                        return 'TEXT' # 默认使用TEXT
+                        # 对于对象类型和其他类型，默认使用TEXT以避免类型转换问题
+                        return 'TEXT' # 默认使用TEXT，避免数值转换错误
 
                 columns_sql = []
                 for col_original in df.columns: # 使用原始df的列顺序和类型
@@ -374,25 +373,86 @@ def insert_dataframe_to_db(st, df, table_name, conn, if_exists='replace'):
             
             # 首先处理所有列的数据类型转换和空值处理
             for col in df_copy.columns:
+                # 处理datetime类型的列 - 转换为PostgreSQL兼容格式
+                if pd.api.types.is_datetime64_any_dtype(df_copy[col].dtype):
+                    # 确保datetime列正确处理，转换为字符串格式避免数值溢出
+                    df_copy[col] = pd.to_datetime(df_copy[col], errors='coerce')
+                    # 将datetime转换为ISO格式字符串，避免数值溢出
+                    df_copy[col] = df_copy[col].dt.strftime('%Y-%m-%d %H:%M:%S').replace('NaT', np.nan)
                 # 处理数值类型的列 - 确保正确的数据类型并处理空值
-                if pd.api.types.is_numeric_dtype(df_copy[col].dtype):
+                elif pd.api.types.is_numeric_dtype(df_copy[col].dtype):
                     # 将空字符串和空白转换为NaN，确保数值类型
                     df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce')
                 # 处理字符串类型的列
                 elif pd.api.types.is_string_dtype(df_copy[col].dtype) or df_copy[col].dtype == 'object':
                     try:
-                        # 确保列是字符串类型以应用 .str 访问器
-                        df_copy[col] = df_copy[col].astype(str).str.strip()
-                        # 替换多种表示空值的方式为 NaN
-                        df_copy[col] = df_copy[col].replace(['', 'NULL', 'null', 'NA', 'N/A', '#N/A', 'nan', 'NaN'], np.nan)
+                        # 检查是否是看起来像日期的字符串
+                        if df_copy[col].dtype == 'object':
+                            # 尝试将看起来像日期的字符串转换为datetime
+                            try:
+                                # 尝试使用标准格式进行快速转换
+                                try:
+                                    temp_series = pd.to_datetime(df_copy[col], format='%Y-%m-%d %H:%M:%S', errors='coerce')
+                                except (ValueError, TypeError):
+                                    # 如果快速转换失败，则回退到通用但较慢的解析
+                                    temp_series = pd.to_datetime(df_copy[col], errors='coerce')
+                                # 如果有有效的日期转换，使用日期格式
+                                if temp_series.notna().sum() > 0:
+                                    df_copy[col] = temp_series.dt.strftime('%Y-%m-%d %H:%M:%S').replace('NaT', np.nan)
+                                else:
+                                    # 保持字符串处理
+                                    df_copy[col] = df_copy[col].astype(str).str.strip()
+                                    df_copy[col] = df_copy[col].replace(['', 'NULL', 'null', 'NA', 'N/A', '#N/A', 'nan', 'NaN'], np.nan)
+                            except (ValueError, TypeError):
+                                # 保持字符串处理
+                                df_copy[col] = df_copy[col].astype(str).str.strip()
+                                df_copy[col] = df_copy[col].replace(['', 'NULL', 'null', 'NA', 'N/A', '#N/A', 'nan', 'NaN'], np.nan)
+                        else:
+                            # 已经是字符串类型
+                            df_copy[col] = df_copy[col].astype(str).str.strip()
+                            df_copy[col] = df_copy[col].replace(['', 'NULL', 'null', 'NA', 'N/A', '#N/A', 'nan', 'NaN'], np.nan)
+                        
+                        # 额外处理：如果字符串列看起来像数值，转换为数值类型
+                        # 检查是否可以转换为数值类型
+                        try:
+                            numeric_series = pd.to_numeric(df_copy[col], errors='coerce')
+                            # 如果大部分值都是数值，则使用数值类型
+                            if numeric_series.notna().sum() > 0 and col not in [c for c in df_copy.columns if '日期' in str(c) or '时间' in str(c)]:
+                                df_copy[col] = numeric_series
+                        except (ValueError, TypeError):
+                            pass  # 保持字符串类型
                     except AttributeError:
                          # 这通常不应发生，因为我们已经检查了类型
                          logger.warning(f"Could not apply string strip/replace to column '{col}' in table '{sanitized_table_name}'. It might contain non-string data despite initial check.")
             
             # --- 数据插入 (使用COPY FROM) ---
+            # 在写入CSV之前，确保所有空字符串和空白值被正确处理
+            for col in df_copy.columns:
+                # 检查是否是已经处理过的datetime格式字符串（避免再次处理）
+                if pd.api.types.is_datetime64_any_dtype(df_copy[col].dtype):
+                    # 已经是ISO格式字符串，无需额外处理
+                    pass
+                else:
+                    # 将所有空字符串、空白字符串和看起来像空值的字符串转换为NaN
+                    df_copy[col] = df_copy[col].replace(['', ' ', '\t', '\n', '\r', 'NULL', 'null', 'NA', 'N/A', '#N/A', 'nan', 'NaN'], np.nan)
+                    
+                    # 对于非datetime列，尝试转换为数值类型（如果可能的话）
+                    try:
+                        # 跳过已经是数值类型的列
+                        if not pd.api.types.is_numeric_dtype(df_copy[col].dtype):
+                            temp_series = pd.to_numeric(df_copy[col], errors='coerce')
+                            # 如果转换后至少有一个非NaN值，且列名不包含日期/时间相关词汇
+                            if temp_series.notna().sum() > 0 and not any(keyword in str(col).lower() for keyword in ['日期', '时间', 'date', 'time']):
+                                df_copy[col] = temp_series
+                    except (ValueError, TypeError):
+                        pass  # 保持原样
+                
+    # 强制将所有NaN值转换为None，确保PostgreSQL COPY正确处理NULL值
+            df_copy = df_copy.where(pd.notnull(df_copy), None)
+            
             buffer = io.StringIO()
             # 使用更安全的CSV写入，确保正确处理引号和分隔符
-            # 使用空字符串来表示NaN值，PostgreSQL COPY命令会将其识别为NULL
+            # 使用空字符串来表示None值，PostgreSQL COPY命令会将其识别为NULL
             df_copy.to_csv(buffer, index=False, header=False, sep=',', na_rep='', quoting=1) # quoting=1 means csv.QUOTE_ALL
             buffer.seek(0)
 

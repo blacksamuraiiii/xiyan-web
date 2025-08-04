@@ -51,15 +51,8 @@ logger = logging.getLogger(__name__)
 st.set_page_config(page_title="析言数据分析助手", layout="wide")
 
 # --- 主标题（必须放在主内容区最前面）---
-st.markdown(
-    """
-    <div style="text-align: center; padding: 2rem 0;">
-        <h1 style="color: #1E88E5; margin-bottom: 0.5rem;">📊 析言数据分析助手</h1>
-        <p style="color: #666; font-size: 1.1rem;">上传您的数据文件（CSV, Excel, 图片, PDF），然后用自然语言提问吧！</p>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+st.title("📊 析言数据分析助手")
+st.caption("上传您的数据文件（CSV, Excel, 图片, PDF），然后用自然语言提问吧！")
 
 # --- LLM初始化（use llm_utils） ---
 sql_client = cached_get_client(st, SQL_MODEL_BASEURL, SQL_MODEL_KEY, "SQL")
