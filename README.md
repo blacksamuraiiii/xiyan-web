@@ -305,8 +305,8 @@ flake8 .
 
 ## 📞 联系我们
 
-- **问题反馈**: [GitHub Issues](https://github.com/your-username/xiyan-data-analysis-assistant/issues)
-- **功能建议**: [GitHub Discussions](https://github.com/your-username/xiyan-data-analysis-assistant/discussions)
+- **问题反馈**: [GitHub Issues](https://github.com/blacksamuraiiii/xiyan-web/issues)
+- **功能建议**: [GitHub Discussions](https://github.com/blacksamuraiiii/xiyan-web/discussions)
 - **邮件联系**: black_samurai@yeah.net
 
 ---
@@ -315,6 +315,6 @@ flake8 .
 
 **⭐ 如果这个项目对您有帮助，请给我们一个Star！**
 
-![Star History](https://img.shields.io/github/stars/your-username/xiyan-data-analysis-assistant?style=social)
+![Star History](https://img.shields.io/github/stars/blacksamuraiiii/xiyan-web?style=social)
 
 </div>
