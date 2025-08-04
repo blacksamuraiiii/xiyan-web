@@ -253,7 +253,9 @@ def process_uploaded_files(st, uploaded_files, conn, vl_client, vl_model_name):
                     df_sheet = item['df']
                     sheet_name = item['sheet_name']
                     base_file_name = os.path.splitext(uploaded_file.name)[0]
-                    if insert_dataframe_to_db(st, df_sheet, final_table_name, conn, if_exists=if_exists_strategy):
+                    # 数据预处理：处理空值、类型转换、超长字段
+                    df_processed = preprocess_excel_data(df_sheet, sheet_name)
+                    if insert_dataframe_to_db(st, df_processed, final_table_name, conn, if_exists=if_exists_strategy):
                         st.success(f"EXCEL表 '{base_file_name}'-'{sheet_name}' 已成功操作表 '{final_table_name}' (策略: {if_exists_strategy})。")
                         results_from_confirmation.append(final_table_name)
                     else:
@@ -505,7 +507,9 @@ def process_tabular_file(st, uploaded_file, conn):
             proceed, final_table_name, if_exists_strategy = _handle_table_existence(st, conn, original_base_table_name)
 
             if proceed:
-                if insert_dataframe_to_db(st, df, final_table_name, conn, if_exists=if_exists_strategy):
+                # 数据预处理：处理空值、类型转换、超长字段
+                df_processed = preprocess_excel_data(df, uploaded_file.name)
+                if insert_dataframe_to_db(st, df_processed, final_table_name, conn, if_exists=if_exists_strategy):
                     st.success(f"CSV 文件 '{uploaded_file.name}' 已成功操作表 '{final_table_name}' (策略: {if_exists_strategy})。")
                     created_tables.append(final_table_name)
                 else:
@@ -571,7 +575,9 @@ def process_tabular_file(st, uploaded_file, conn):
                 proceed, final_table_name, if_exists_strategy = _handle_table_existence(st, conn, original_table_name)
 
                 if proceed:
-                    if insert_dataframe_to_db(st, df, final_table_name, conn, if_exists=if_exists_strategy):
+                    # 数据预处理：处理空值、类型转换、超长字段
+                    df_processed = preprocess_excel_data(df, sheet_name)
+                    if insert_dataframe_to_db(st, df_processed, final_table_name, conn, if_exists=if_exists_strategy):
                         st.success(f"EXCEL表 '{base_file_name}'-'{sheet_name}' 已成功操作表 '{final_table_name}' (策略: {if_exists_strategy})。")
                         created_tables.append(final_table_name)
                     else:
@@ -589,6 +595,123 @@ def process_tabular_file(st, uploaded_file, conn):
         st.error(f"处理表格文件 '{uploaded_file.name}' 时出错: {e}")
         logger.error(f"Error processing tabular file {uploaded_file.name}: {e}", exc_info=True)
         return None
+
+# --- 数据预处理函数 ---
+def preprocess_excel_data(df, sheet_name=""):
+    """预处理Excel数据，处理空值、类型转换和超长字段"""
+    if df is None or df.empty:
+        return df
+    
+    df_processed = df.copy()
+    logger.info(f"开始预处理工作表 '{sheet_name}' 的数据，原始形状: {df_processed.shape}")
+    
+    # 1. 处理列名：清理特殊字符，确保列名有效
+    cleaned_columns = {}
+    for i, col in enumerate(df_processed.columns):
+        if pd.isna(col) or str(col).strip() == '':
+            cleaned_col = f'col_{i}'
+        else:
+            # 清理列名：保留字母、数字、下划线，替换其他字符为下划线
+            cleaned_col = ''.join(c if c.isalnum() or c == '_' else '_' for c in str(col).strip())
+            cleaned_col = cleaned_col.lower()
+            # 确保列名以字母开头
+            if cleaned_col and not cleaned_col[0].isalpha():
+                cleaned_col = f'col_{cleaned_col}'
+            # 处理空列名或重复列名
+            if not cleaned_col:
+                cleaned_col = f'col_{i}'
+        cleaned_columns[col] = cleaned_col
+    
+    df_processed = df_processed.rename(columns=cleaned_columns)
+    logger.info(f"清理后的列名: {list(df_processed.columns)}")
+    
+    # 2. 处理空值和异常值
+    for col in df_processed.columns:
+        col_data = df_processed[col]
+        
+        # 将各种空值表示统一为NaN
+        if col_data.dtype == 'object':
+            # 处理字符串类型的空值
+            empty_values = ['', ' ', '\t', '\n', '\r', 'NULL', 'null', 'NA', 'N/A', '#N/A', '#VALUE!', 
+                           '#REF!', '#DIV/0!', '#NUM!', '#NAME?', '#NULL!', 'nan', 'NaN', '-', '--']
+            col_data = col_data.replace(empty_values, np.nan)
+            col_data = col_data.astype(str).str.strip().replace('', np.nan)
+        
+        # 3. 时间类型字段处理
+        try:
+            # 检测可能的时间字段（包含日期、时间、年月日等关键词）
+            col_lower = str(col).lower()
+            is_datetime_col = any(keyword in col_lower for keyword in 
+                                ['日期', '时间', 'date', 'time', 'year', 'month', 'day', '年', '月', '日'])
+            
+            if is_datetime_col and col_data.dtype == 'object':
+                # 尝试将字符串转换为日期时间
+                col_data = pd.to_datetime(col_data, errors='coerce', infer_datetime_format=True)
+                # 成功转换后格式化为标准格式
+                if col_data.notna().sum() > 0:
+                    col_data = col_data.dt.strftime('%Y-%m-%d %H:%M:%S').replace('NaT', np.nan)
+                    logger.info(f"列 '{col}' 转换为日期时间格式")
+            elif pd.api.types.is_datetime64_any_dtype(col_data.dtype):
+                # 已经是日期时间类型，格式化为字符串
+                col_data = col_data.dt.strftime('%Y-%m-%d %H:%M:%S').replace('NaT', np.nan)
+        except (ValueError, TypeError):
+            logger.warning(f"列 '{col}' 日期时间转换失败，保持原类型")
+        
+        # 4. 数值类型字段处理
+        try:
+            # 检测可能的数值字段
+            if col_data.dtype == 'object':
+                # 先清理空字符串和空白字符
+                col_data_cleaned = col_data.astype(str).str.strip()
+                col_data_cleaned = col_data_cleaned.replace(['', 'nan', 'NaN', 'null', 'NULL', 'None', 'none'], None)
+                
+                # 尝试转换为数值类型
+                numeric_data = pd.to_numeric(col_data_cleaned, errors='coerce')
+                
+                # 如果大部分值可以转换为数值且不是时间字段
+                valid_numeric = numeric_data.notna().sum()
+                total_values = len(col_data)
+                
+                if valid_numeric > 0 and (valid_numeric / total_values) > 0.5:
+                    # 根据数值范围选择合适的类型
+                    if numeric_data.dropna().apply(lambda x: float(x).is_integer()).all():
+                        col_data = numeric_data.astype('Int64')  # 可空整数类型
+                    else:
+                        col_data = numeric_data.astype('float64')
+                    logger.info(f"列 '{col}' 转换为数值类型")
+                else:
+                    # 保持为字符串，但确保空值正确表示
+                    col_data = col_data_cleaned.where(pd.notnull(col_data_cleaned), None)
+        except (ValueError, TypeError):
+            logger.warning(f"列 '{col}' 数值转换失败，保持字符串类型")
+        
+        # 5. 超长字段处理
+        if col_data.dtype == 'object':
+            # 限制字符串长度，避免超出数据库限制
+            max_length = 500  # PostgreSQL TEXT类型可以存储大量数据，但限制长度便于查询
+            col_data = col_data.astype(str).apply(
+                lambda x: x[:max_length] + '...' if isinstance(x, str) and len(x) > max_length else x
+            )
+        
+        # 6. 最终空值处理：将NaN转换为None，确保数据库兼容性
+        col_data = col_data.where(pd.notnull(col_data), None)
+        
+        df_processed[col] = col_data
+    
+    # 7. 删除全为空的列
+    empty_cols = [col for col in df_processed.columns if df_processed[col].isna().all()]
+    if empty_cols:
+        df_processed = df_processed.drop(columns=empty_cols)
+        logger.info(f"删除空列: {empty_cols}")
+    
+    # 8. 标准化数据类型
+    for col in df_processed.columns:
+        if df_processed[col].dtype == 'object':
+            # 确保所有对象类型列中的None值正确处理
+            df_processed[col] = df_processed[col].where(pd.notnull(df_processed[col]), None)
+    
+    logger.info(f"数据预处理完成，处理后形状: {df_processed.shape}")
+    return df_processed
 
 # --- 处理OCR--- 
 def process_ocr(st, uploaded_file, conn, vl_client, vl_model_name, force_process=False, target_table_name=None, ocr_if_exists='replace'):

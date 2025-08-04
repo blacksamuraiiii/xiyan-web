@@ -3,6 +3,9 @@ CLAUDE.md
 TODO.md
 .env
 debug.log
+/__pycache__/
 lib/__pycache__/
 tests/小微ict清单.xlsx
 /.claude/
+test_excel_processing.py
+test_excel_processing.log

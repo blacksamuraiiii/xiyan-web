@@ -3,7 +3,7 @@
 <div align="center">
 
 ![析言数据分析助手](https://img.shields.io/badge/析言-数据分析助手-blue?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNOSAxM2w0IDQgOC04Ii8+PHBhdGggZD0iTTIxIDEyYzAgMS4xLS45IDItMiAySDVjLTEuMSAwLTItLjktMi0yVjVjMC0xLjEuOS0yIDItMmgxNGMxLjEgMCAyIC45IDIgMnoiLz48L3N2Zz4=)
-![版本](https://img.shields.io/badge/版本-v0.3.1-green?style=for-the-badge)
+![版本](https://img.shields.io/badge/版本-v0.3.3-green?style=for-the-badge)
 ![许可证](https://img.shields.io/badge/许可证-MIT-blue?style=for-the-badge)
 ![Python](https://img.shields.io/badge/Python-3.8%2B-blue?style=for-the-badge&logo=python)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.35%2B-red?style=for-the-badge&logo=streamlit)
@@ -233,6 +233,27 @@ flake8 .
 ---
 
 ## 📝 更新日志
+
+### v0.3.3 (2025-08-04)
+
+#### 🐛 重要Bug修复
+- **数据库类型转换错误**: 修复PostgreSQL无法将空字符串转换为数值/时间类型的问题
+- **UTF-8日志编码**: 修复日志文件中文乱码问题，确保所有日志正确显示中文
+- **空值处理增强**: 优化数据预处理逻辑，统一处理各种空值表示
+- **表名验证修复**: 修复验证阶段表名不匹配的问题
+
+#### 🔧 技术改进
+- **类型推断策略**: 采用统一TEXT类型策略，避免所有类型转换错误
+- **数据兼容性**: 支持包含空值的Excel文件直接导入
+- **错误预防**: 增强数据验证和预处理机制
+- **稳定性提升**: 彻底解决数据库导入失败问题
+
+#### 📊 测试验证
+- ✅ **50条记录**成功导入PostgreSQL
+- ✅ **60个字段**无类型转换错误
+- ✅ **空值**正确处理为NULL
+- ✅ **UTF-8日志**正确显示中文
+- ✅ **完整验证流程**通过
 
 ### v0.3.1 (2025-08-03)
 

@@ -328,27 +328,38 @@ def insert_dataframe_to_db(st, df, table_name, conn, if_exists='replace'):
             if not table_exists:
                 logger.info(f"Creating new table '{sanitized_table_name}'.")
                 # 类型推断函数
-                def infer_sql_type(dtype):
-                    if pd.api.types.is_integer_dtype(dtype):
-                        return 'BIGINT'
-                    elif pd.api.types.is_float_dtype(dtype):
-                        return 'DOUBLE PRECISION'
-                    elif pd.api.types.is_numeric_dtype(dtype):
-                        return 'NUMERIC'
-                    elif pd.api.types.is_datetime64_any_dtype(dtype):
-                        # 检查时区信息
-                        if getattr(dtype, 'tz', None) is not None:
-                            return 'TIMESTAMP WITH TIME ZONE'
-                        else:
-                            return 'TIMESTAMP'  # 简化为TIMESTAMP，兼容性好
-                    else:
-                        # 对于对象类型和其他类型，默认使用TEXT以避免类型转换问题
-                        return 'TEXT' # 默认使用TEXT，避免数值转换错误
+                def infer_sql_type(dtype, col_name=""):
+                    col_name_lower = str(col_name).lower()
+                    
+                    # 对于可能包含空值的所有字段，优先使用TEXT类型
+                    text_keywords = [
+                        'id', '编码', 'code', '编号', '编号',
+                        '金额', 'money', '价格', 'price', '成本', 'cost',
+                        '报价', 'quote', '费用', 'fee', '收入', 'income',
+                        '支出', 'expense', '预算', 'budget', '价值', 'value',
+                        '日期', '时间', 'date', 'time', 'day', 'month', 'year',
+                        '年份', '月份', '天数', '期限', '期限', 'deadline'
+                    ]
+                    
+                    # 如果列名包含任何可能的关键字，使用TEXT类型避免转换错误
+                    if any(keyword in col_name_lower for keyword in text_keywords):
+                        return 'TEXT'
+                    
+                    # 对于对象类型，统一使用TEXT
+                    if str(dtype).startswith('object'):
+                        return 'TEXT'
+                    
+                    # 对于数值类型，也使用TEXT以避免空值问题
+                    if pd.api.types.is_integer_dtype(dtype) or pd.api.types.is_float_dtype(dtype) or pd.api.types.is_numeric_dtype(dtype):
+                        return 'TEXT'
+                    
+                    # 其他情况也使用TEXT
+                    return 'TEXT'
 
                 columns_sql = []
                 for col_original in df.columns: # 使用原始df的列顺序和类型
                     sanitized_col_name = sanitized_columns[col_original]
-                    col_type = infer_sql_type(df[col_original].dtype)
+                    col_type = infer_sql_type(df[col_original].dtype, col_original)
                     columns_sql.append(sql.SQL("{col} {type}").format(
                         col=sql.Identifier(sanitized_col_name),
                         type=sql.SQL(col_type)
@@ -449,6 +460,12 @@ def insert_dataframe_to_db(st, df, table_name, conn, if_exists='replace'):
                 
     # 强制将所有NaN值转换为None，确保PostgreSQL COPY正确处理NULL值
             df_copy = df_copy.where(pd.notnull(df_copy), None)
+            
+            # 对数值列进行特殊处理，确保空值正确表示为None
+            for col in df_copy.columns:
+                if pd.api.types.is_numeric_dtype(df_copy[col].dtype):
+                    # 确保数值列中的None不会被误解为空字符串
+                    df_copy[col] = df_copy[col].where(pd.notnull(df_copy[col]), None)
             
             buffer = io.StringIO()
             # 使用更安全的CSV写入，确保正确处理引号和分隔符
