@@ -19,22 +19,26 @@
 ## 🌟 功能特性
 
 ### 📁 多格式文件支持
+
 - **表格文件**: CSV, Excel (.xls, .xlsx)
 - **图片文件**: JPG, PNG (OCR识别)
 - **文档文件**: PDF (OCR识别)
 - **智能编码检测**: 自动识别文件编码格式
 
 ### 🤖 AI智能分析
+
 - **自然语言查询**: 使用XiYan-SQL模型将自然语言转换为SQL
 - **OCR表格提取**: 基于Qwen-VL模型的图片/PDF表格识别
 - **智能数据清洗**: 自动处理缺失值、格式标准化
 
 ### 📊 数据可视化
+
 - **交互式图表**: 基于Plotly的动态图表生成
 - **多种图表类型**: 柱状图、折线图、饼图等
 - **结果导出**: 支持CSV格式下载
 
 ### 🔧 企业级特性
+
 - **数据库集成**: PostgreSQL数据库自动管理
 - **会话管理**: 多会话支持，数据隔离
 - **连接池**: 高性能数据库连接管理
@@ -96,15 +100,19 @@ docker-compose up --build -d
 ## 🎨 界面展示
 
 ### 📊 数据库连接
+
 ![数据库连接界面](./screenshots/0.数据库连接.png)
 
 ### 📁 文件上传
+
 ![文件上传界面](./screenshots/1.上传文件数据.png)
 
 ### 💬 智能分析
+
 ![提问与分析界面](./screenshots/2.提问与分析.png)
 
 ### 📈 可视化结果
+
 ![查询结果与图表分析](./screenshots/3.查询结果与图表分析.png)
 
 ---
@@ -137,12 +145,16 @@ DB_DATABASE=your_db_name
 ### 推荐模型
 
 #### XiYanSQL-QwenCoder-32B-2504
+
 专为SQL生成优化的模型
+
 - 🤗 [HuggingFace](https://huggingface.co/XGenerationLab/XiYanSQL-QwenCoder-32B-2504)
 - 🎯 [魔搭](https://modelscope.cn/models/XGenerationLab/XiYanSQL-QwenCoder-32B-2504)
 
 #### Qwen2.5-VL-7B-Instruct
+
 强大的视觉语言模型
+
 - 🤗 [HuggingFace](https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct)
 - 🎯 [魔搭](https://modelscope.cn/models/Qwen/Qwen2.5-VL-7B-Instruct)
 
@@ -151,22 +163,26 @@ DB_DATABASE=your_db_name
 ## 🛠️ 技术栈
 
 ### 前端技术
+
 - **Streamlit**: 现代化Web应用框架
 - **Plotly**: 交互式数据可视化
 - **HTML/CSS**: 界面美化
 
 ### 后端技术
+
 - **Python**: 核心开发语言
 - **Pandas**: 数据处理和分析
 - **NumPy**: 数值计算
 - **PostgreSQL**: 主数据库
 
 ### AI模型
+
 - **XiYan-SQL**: 自然语言转SQL
 - **Qwen-VL**: 视觉语言模型
 - **OpenAI API**: 通用API接口
 
 ### 文件处理
+
 - **PyMuPDF**: PDF文件处理
 - **python-calamine**: Excel文件解析
 - **chardet**: 文件编码检测
@@ -237,50 +253,18 @@ flake8 .
 ### v0.3.3 (2025-08-04)
 
 #### 🐛 重要Bug修复
+
 - **数据库类型转换错误**: 修复PostgreSQL无法将空字符串转换为数值/时间类型的问题
 - **UTF-8日志编码**: 修复日志文件中文乱码问题，确保所有日志正确显示中文
 - **空值处理增强**: 优化数据预处理逻辑，统一处理各种空值表示
 - **表名验证修复**: 修复验证阶段表名不匹配的问题
 
 #### 🔧 技术改进
+
 - **类型推断策略**: 采用统一TEXT类型策略，避免所有类型转换错误
 - **数据兼容性**: 支持包含空值的Excel文件直接导入
 - **错误预防**: 增强数据验证和预处理机制
 - **稳定性提升**: 彻底解决数据库导入失败问题
-
-#### 📊 测试验证
-- ✅ **50条记录**成功导入PostgreSQL
-- ✅ **60个字段**无类型转换错误
-- ✅ **空值**正确处理为NULL
-- ✅ **UTF-8日志**正确显示中文
-- ✅ **完整验证流程**通过
-
-### v0.3.1 (2025-08-03)
-
-#### 🎉 重大优化
-- **文件解析稳定性**: 增强CSV、Excel、PDF解析的兼容性
-- **UI界面美化**: 全新的现代化界面设计
-- **性能优化**: 添加数据库连接池和批量插入优化
-- **错误处理**: 统一的错误处理机制
-
-#### 🔧 技术改进
-- **CSV解析**: 多种编码尝试机制 (utf-8, gbk, gb2312, latin1)
-- **Excel解析**: 多引擎支持 (calamine, openpyxl, xlrd)
-- **OCR优化**: 内存管理和图片格式转换优化
-- **数据库**: 连接池支持和事务处理优化
-
-#### 🎨 界面优化
-- **布局优化**: 响应式列布局设计
-- **文件上传**: 美化的拖拽上传界面
-- **数据展示**: 改进的表格和图表显示
-- **用户体验**: 统一的图标和色彩主题
-
-#### 🤖 AI优化
-- **Claude Code**: 由Claude Code协助完成代码优化和重构
-- **代码质量**: 遵循KISS原则，提升代码可维护性
-- **错误处理**: 标准化的错误消息和用户建议
-
----
 
 ## 📄 许可证
 
@@ -291,11 +275,13 @@ flake8 .
 ## 🙏 致谢
 
 ### 特别感谢
-- **Claude Code** - 感谢Claude Code在v0.3.1版本优化中提供的代码重构、性能优化和界面美化支持
+
+- **Claude Code** - 感谢Claude Code提供的代码重构、性能优化和界面美化支持
 - **XiYanSQL团队** - 提供优秀的SQL生成模型
 - **Qwen团队** - 提供强大的视觉语言模型
 
 ### 技术支持
+
 - [Streamlit](https://streamlit.io/) - 现代化Web应用框架
 - [Pandas](https://pandas.pydata.org/) - 数据处理库
 - [Plotly](https://plotly.com/) - 数据可视化库
